@@ -109,6 +109,10 @@ jobs:
         id: filter
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
         with:
+          # Use the checked-out base/head SHAs instead of the PR API. The
+          # workflow's read-only token is not authorized for listFiles on all
+          # pull-request contexts.
+          token: ''
           base: ${{ inputs.base_sha || github.event.pull_request.base.sha }}
           ref: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
           filters: ${{ steps.generate-filters.outputs.filters }}
