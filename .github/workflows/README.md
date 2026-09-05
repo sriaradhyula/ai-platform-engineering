@@ -15,9 +15,9 @@ charts from one immutable revision. Provide a version such as
 dependency references, commits and tags the release, then dispatches the child
 publishers from that tag. For an `-outshift.N` tag, Python metadata uses the
 PEP 440 equivalent `+outshift.N`. When the target GHCR namespace differs from
-the repository owner, set `repo_org` to that namespace. The workflow dispatches
-the local `helm.yml` publisher with `publish_all=true` and passes the same
-namespace to the image workflows.
+the default `cisco-eti` namespace, set `repo_org` to that namespace. The
+workflow dispatches the local `helm.yml` publisher with `publish_all=true` and
+passes the same namespace to the image workflows.
 
 ## General Information
 

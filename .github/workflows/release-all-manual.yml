@@ -14,7 +14,7 @@ on:
         description: "GitHub organization/user that owns the GHCR packages"
         required: false
         type: string
-        default: ""
+        default: "cisco-eti"
 
 permissions:
   actions: write
