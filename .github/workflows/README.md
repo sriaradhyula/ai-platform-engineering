@@ -6,6 +6,19 @@ This directory contains automated workflows for the AI Platform Engineering proj
 
 See the `.github/workflows/` directory for the full list of CI/CD workflows.
 
+### Manual mirror build
+
+Use **[Release] Build All Images and Helm Charts** (`release-all-manual.yml`)
+to create a mirror release and publish every image workflow and both local
+charts from one immutable revision. Provide a version such as
+`1.0.0-outshift.1`; the workflow updates all `Chart.yaml` files and local chart
+dependency references, commits and tags the release, then dispatches the child
+publishers from that tag. For an `-outshift.N` tag, Python metadata uses the
+PEP 440 equivalent `+outshift.N`. When the target GHCR namespace differs from
+the repository owner, set `repo_org` to that namespace. The workflow dispatches
+the local `helm.yml` publisher with `publish_all=true` and passes the same
+namespace to the image workflows.
+
 ## General Information
 
 ### Monitoring Workflows
@@ -101,4 +114,3 @@ jobs:
 
 **Last Updated:** October 30, 2025  
 **Maintainer:** Platform Engineering Team
-

@@ -29,6 +29,10 @@ on:
         description: 'Optional comma-separated MCP agents to build (for example: aws,figma). Defaults to all agents.'
         required: false
         type: string
+      repo_org:
+        description: 'GitHub organization/user that owns the GHCR packages'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -231,7 +235,7 @@ jobs:
 
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-agents.outputs.image_prefix }}mcp-${{ matrix.agent }}
+      IMAGE_NAME: ${{ inputs.repo_org || github.repository_owner }}/${{ needs.determine-agents.outputs.image_prefix }}mcp-${{ matrix.agent }}
 
     steps:
       - name: 🔒 harden runner
@@ -334,7 +338,7 @@ jobs:
 
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-agents.outputs.image_prefix }}mcp-${{ matrix.agent }}
+      IMAGE_NAME: ${{ inputs.repo_org || github.repository_owner }}/${{ needs.determine-agents.outputs.image_prefix }}mcp-${{ matrix.agent }}
 
     steps:
       - name: 🔒 harden runner
@@ -400,7 +404,7 @@ jobs:
 
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-agents.outputs.image_prefix }}mcp-${{ matrix.agent }}
+      IMAGE_NAME: ${{ inputs.repo_org || github.repository_owner }}/${{ needs.determine-agents.outputs.image_prefix }}mcp-${{ matrix.agent }}
 
     steps:
       - name: 🔒 Harden runner

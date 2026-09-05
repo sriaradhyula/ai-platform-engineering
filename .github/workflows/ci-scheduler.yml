@@ -17,6 +17,10 @@ on:
         description: 'Version tag to apply (e.g., 0.4.5-dev.5)'
         required: false
         type: string
+      repo_org:
+        description: 'GitHub organization/user that owns the GHCR packages'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -164,7 +168,7 @@ jobs:
             arch: arm64
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}${{ matrix.image }}
+      IMAGE_NAME: ${{ inputs.repo_org || github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}${{ matrix.image }}
 
     steps:
       - name: Skip if not building this image
@@ -259,7 +263,7 @@ jobs:
             should_build: ${{ needs.determine-changes.outputs.should_build_cron_runner }}
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}${{ matrix.image }}
+      IMAGE_NAME: ${{ inputs.repo_org || github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}${{ matrix.image }}
     steps:
       - name: Skip if not building this image
         if: matrix.should_build != 'true'

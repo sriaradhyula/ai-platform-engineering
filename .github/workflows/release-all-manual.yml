@@ -1,0 +1,280 @@
+name: "[Release] Build All Images and Helm Charts"
+
+# Run this workflow from main. It creates a mirror release commit and tag first,
+# then dispatches every child workflow from that immutable tag while source_sha
+# pins every image build to the same commit.
+on:
+  workflow_dispatch:
+    inputs:
+      tag_version:
+        description: "Mirror image/chart version (for example, 1.0.0-outshift.1)"
+        required: true
+        type: string
+      repo_org:
+        description: "GitHub organization/user that owns the GHCR packages"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  prepare-release:
+    name: Bump and tag mirror release
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      release_sha: ${{ steps.release.outputs.release_sha }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.CI_RELEASE_APP_ID }}
+          private-key: ${{ secrets.CI_RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Install yq
+        env:
+          YQ_VERSION: v4.53.3
+          YQ_SHA256: fa52a4e758c63d38299163fbdd1edfb4c4963247918bf9c1c5d31d84789eded4
+        run: |
+          set -euo pipefail
+
+          curl -fsSL -o /tmp/yq \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c -
+          sudo install -m 0755 /tmp/yq /usr/local/bin/yq
+
+      - name: Bump version files, commit, and tag
+        id: release
+        env:
+          RELEASE_TAG: ${{ inputs.tag_version }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$RELEASE_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-outshift\.[0-9]+)?$ ]]; then
+            echo "Invalid tag_version: $RELEASE_TAG"
+            echo "Expected x.y.z or x.y.z-outshift.N"
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Tag already exists: $RELEASE_TAG"
+            exit 1
+          fi
+
+          CHART_FILES=$(find charts -name "Chart.yaml" -type f | sort)
+          if [[ -z "$CHART_FILES" ]]; then
+            echo "No Chart.yaml files found under charts/"
+            exit 1
+          fi
+
+          # Keep Helm and container artifacts on the mirror-specific version.
+          for chart_file in $CHART_FILES; do
+            RELEASE_TAG="$RELEASE_TAG" yq -i \
+              '.version = strenv(RELEASE_TAG) | .appVersion = strenv(RELEASE_TAG)' \
+              "$chart_file"
+          done
+
+          # Keep local chart dependency constraints synchronized with the
+          # versions written above.
+          LOCAL_CHART_NAMES=$(for chart_file in $CHART_FILES; do yq '.name' "$chart_file"; done | sort -u)
+          for chart_file in $CHART_FILES; do
+            for chart_name in $LOCAL_CHART_NAMES; do
+              yq -i \
+                "(.dependencies[] | select(.name == \"$chart_name\" and (.repository == null or (.repository | test(\"^file://\")))).version) = \"$RELEASE_TAG\"" \
+                "$chart_file" 2>/dev/null || true
+            done
+          done
+
+          # PEP 440 uses a local-version marker, while Docker and Helm use the
+          # hyphenated mirror tag. This keeps Python metadata and uv valid.
+          PYPROJECT_VERSION="$RELEASE_TAG"
+          if [[ "$RELEASE_TAG" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-outshift\.([0-9]+)$ ]]; then
+            PYPROJECT_VERSION="${BASH_REMATCH[1]}+outshift.${BASH_REMATCH[2]}"
+          fi
+          sed -i "s/^version = \".*\"/version = \"${PYPROJECT_VERSION}\"/" pyproject.toml
+          uv lock
+
+          git config user.name "caipe-ci-release[bot]"
+          git config user.email "caipe-ci-release[bot]@users.noreply.github.com"
+          git add pyproject.toml uv.lock
+          find charts -name "Chart.yaml" -type f -exec git add {} +
+
+          if git diff --cached --quiet; then
+            echo "No version changes detected; tagging the current main commit"
+          else
+            git commit -m "chore(release): bump mirror version to $RELEASE_TAG"
+          fi
+
+          git tag -a "$RELEASE_TAG" -m "Mirror release $RELEASE_TAG"
+          git push origin HEAD:main "$RELEASE_TAG"
+
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  build-image:
+    name: Build ${{ matrix.workflow }}
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - workflow: ci-agentgateway-config-bridge.yml
+            mode: standard
+          - workflow: ci-agentic-app-runtime.yml
+            mode: source
+          - workflow: ci-audit-service.yml
+            mode: force
+          - workflow: ci-autonomous-agents.yml
+            mode: force
+          - workflow: ci-caipe-ui.yml
+            mode: force-source
+          - workflow: ci-dynamic-agents.yml
+            mode: force-source
+          - workflow: ci-keycloak-init.yml
+            mode: standard
+          - workflow: ci-mcp-servers.yml
+            mode: mcp
+          - workflow: ci-openfga-authz-bridge.yml
+            mode: source
+          - workflow: ci-rag.yml
+            mode: force
+          - workflow: ci-scheduler.yml
+            mode: standard
+          - workflow: ci-skill-scanner.yml
+            mode: force
+          - workflow: ci-slack-bot.yml
+            mode: force
+          - workflow: ci-sqs-webhook-proxy-receiver.yml
+            mode: standard
+          - workflow: ci-tome-agent.yml
+            mode: source-required
+          - workflow: ci-webex-bot.yml
+            mode: force
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Dispatch and wait for image build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_VERSION: ${{ needs.prepare-release.outputs.release_tag }}
+          REPO_ORG: ${{ inputs.repo_org || github.repository_owner }}
+          SOURCE_SHA: ${{ needs.prepare-release.outputs.release_sha }}
+          WORKFLOW: ${{ matrix.workflow }}
+          MODE: ${{ matrix.mode }}
+          WORKFLOW_REF: ${{ needs.prepare-release.outputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$REPO_ORG" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]]; then
+            echo "Invalid repo_org: $REPO_ORG"
+            exit 1
+          fi
+          if [[ ! "$TAG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.-]+)?$ ]]; then
+            echo "Invalid tag_version: $TAG_VERSION"
+            exit 1
+          fi
+
+          command=(
+            gh workflow run "$WORKFLOW"
+            --repo "$GITHUB_REPOSITORY"
+            --ref "$WORKFLOW_REF"
+            -f "tag_version=$TAG_VERSION"
+            -f "repo_org=$REPO_ORG"
+          )
+
+          case "$MODE" in
+            force|force-source)
+              command+=(-f force_build=true)
+              ;;
+          esac
+
+          case "$MODE" in
+            source|force-source|mcp|source-required)
+              command+=(-f "source_sha=$SOURCE_SHA")
+              ;;
+          esac
+
+          if [[ "$MODE" == "mcp" ]]; then
+            command+=(-f build_all=true)
+          fi
+
+          run_url=$("${command[@]}")
+          if [[ ! "$run_url" =~ /actions/runs/([0-9]+)$ ]]; then
+            echo "Could not identify child workflow run from: $run_url"
+            exit 1
+          fi
+
+          run_id="${BASH_REMATCH[1]}"
+          echo "Child workflow: $run_url" >> "$GITHUB_STEP_SUMMARY"
+          gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status
+
+  publish-helm:
+    name: Publish local Helm charts
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Dispatch and wait for Helm publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_VERSION: ${{ needs.prepare-release.outputs.release_tag }}
+          REPO_ORG: ${{ inputs.repo_org || github.repository_owner }}
+          WORKFLOW_REF: ${{ needs.prepare-release.outputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$REPO_ORG" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]]; then
+            echo "Invalid repo_org: $REPO_ORG"
+            exit 1
+          fi
+
+          run_url=$(gh workflow run helm.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$WORKFLOW_REF" \
+            -f publish_all=true \
+            -f "repo_org=$REPO_ORG")
+
+          if [[ ! "$run_url" =~ /actions/runs/([0-9]+)$ ]]; then
+            echo "Could not identify Helm workflow run from: $run_url"
+            exit 1
+          fi
+
+          run_id="${BASH_REMATCH[1]}"
+          echo "Helm workflow: $run_url" >> "$GITHUB_STEP_SUMMARY"
+          gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status

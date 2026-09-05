@@ -20,6 +20,10 @@ on:
         required: false
         type: boolean
         default: false
+      repo_org:
+        description: 'GitHub organization/user that owns the GHCR packages'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -228,7 +232,7 @@ jobs:
       CI_RAG_APP_ID: ${{ secrets.CI_BUILD_APP_ID || secrets.GHA_APP_ID }}
       CI_RAG_APP_PRIVATE_KEY: ${{ secrets.CI_BUILD_APP_PRIVATE_KEY || secrets.GHA_APP_PRIVATE_KEY }}
       # For slim variant, append -slim to image name suffix in tags (not the image name itself)
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}caipe-rag-${{ matrix.component }}
+      IMAGE_NAME: ${{ inputs.repo_org || github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}caipe-rag-${{ matrix.component }}
       DOCKERFILE: ai_platform_engineering/knowledge_bases/rag/build/Dockerfile.${{ matrix.component }}
 
     steps:
@@ -365,7 +369,7 @@ jobs:
 
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}caipe-rag-${{ matrix.component }}
+      IMAGE_NAME: ${{ inputs.repo_org || github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}caipe-rag-${{ matrix.component }}
 
     steps:
       - name: 🔒 harden runner
@@ -431,7 +435,7 @@ jobs:
 
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}caipe-rag-${{ matrix.component }}
+      IMAGE_NAME: ${{ inputs.repo_org || github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}caipe-rag-${{ matrix.component }}
       DOCKERFILE: ai_platform_engineering/knowledge_bases/rag/build/Dockerfile.${{ matrix.component }}
       CI_RAG_APP_ID: ${{ secrets.CI_BUILD_APP_ID || secrets.GHA_APP_ID }}
       CI_RAG_APP_PRIVATE_KEY: ${{ secrets.CI_BUILD_APP_PRIVATE_KEY || secrets.GHA_APP_PRIVATE_KEY }}

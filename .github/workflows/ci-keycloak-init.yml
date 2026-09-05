@@ -23,6 +23,10 @@ on:
         description: 'Version tag to apply (e.g., 0.5.0-rc.7)'
         required: false
         type: string
+      repo_org:
+        description: 'GitHub organization/user that owns the GHCR package'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -91,7 +95,7 @@ jobs:
             arch: arm64
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}keycloak-init
+      IMAGE_NAME: ${{ inputs.repo_org || github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}keycloak-init
       DOCKERFILE: build/Dockerfile.keycloak-init
     steps:
       - name: 🔒 Harden runner
@@ -165,7 +169,7 @@ jobs:
       packages: write
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: ${{ github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}keycloak-init
+      IMAGE_NAME: ${{ inputs.repo_org || github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}keycloak-init
     steps:
       - name: 🔒 Harden runner
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1

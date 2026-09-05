@@ -21,6 +21,10 @@ on:
         description: "Exact source commit to build (used by coordinated Tome builds)"
         required: false
         type: string
+      repo_org:
+        description: "GitHub organization/user that owns the GHCR package"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -28,7 +32,7 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/caipe-agentic-app-runtime
+  IMAGE_NAME: ${{ inputs.repo_org || github.repository_owner }}/caipe-agentic-app-runtime
   DOCKERFILE: build/Dockerfile.agentic-app
   LOCAL_IMAGE: caipe-agentic-app-runtime:ci
 
