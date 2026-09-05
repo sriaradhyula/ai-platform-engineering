@@ -1,7 +1,7 @@
 apiVersion: v2
 name: webex-bot
 description: Webex bot integration for AI Platform Engineering using the CAIPE UI BFF
-version: 1.0.0-outshift.20260905.2
-appVersion: 1.0.0-outshift.20260905.2
+version: 1.0.0-outshift.20260905.3
+appVersion: 1.0.0-outshift.20260905.3
 type: application
 dependencies: []
