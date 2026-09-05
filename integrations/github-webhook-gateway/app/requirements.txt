@@ -1,0 +1,2 @@
+# Bundle the SDK used by the function instead of depending on the runtime copy.
+boto3>=1.34,<2

@@ -184,6 +184,8 @@ jobs:
             mode: force
           - workflow: ci-sqs-webhook-proxy-receiver.yml
             mode: standard
+          - workflow: ci-github-webhook-gateway.yml
+            mode: standard
           - workflow: ci-tome-agent.yml
             mode: source-required
           - workflow: ci-webex-bot.yml
