@@ -170,7 +170,7 @@ jobs:
             trigger: tag
           - workflow: ci-caipe-ui.yml
             mode: force-source
-            trigger: tag
+            trigger: dispatch
           - workflow: ci-dynamic-agents.yml
             mode: force-source
             trigger: tag
@@ -242,8 +242,8 @@ jobs:
 
           # Workflows with a tag push trigger are already started by the release
           # tag. Waiting for that run avoids a second build of the same image
-          # set. The two source-pinned workflows without a matching tag trigger
-          # continue to use workflow_dispatch.
+          # set. Source-pinned workflows without a matching tag trigger use
+          # workflow_dispatch instead.
           if [[ "$TRIGGER" == "tag" && "$REPO_ORG" == "$GITHUB_REPOSITORY_OWNER" ]]; then
             for attempt in {1..24}; do
               run_id=$(gh run list \
