@@ -37,7 +37,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
-          app-id: ${{ secrets.CI_RELEASE_APP_ID }}
+          client-id: ${{ secrets.CI_RELEASE_APP_ID }}
           private-key: ${{ secrets.CI_RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
 
@@ -158,38 +158,55 @@ jobs:
         include:
           - workflow: ci-agentgateway-config-bridge.yml
             mode: standard
+            trigger: tag
           - workflow: ci-agentic-app-runtime.yml
             mode: source
+            trigger: dispatch
           - workflow: ci-audit-service.yml
             mode: force
+            trigger: tag
           - workflow: ci-autonomous-agents.yml
             mode: force
+            trigger: tag
           - workflow: ci-caipe-ui.yml
             mode: force-source
+            trigger: tag
           - workflow: ci-dynamic-agents.yml
             mode: force-source
+            trigger: tag
           - workflow: ci-keycloak-init.yml
             mode: standard
+            trigger: tag
           - workflow: ci-mcp-servers.yml
             mode: mcp
+            trigger: tag
           - workflow: ci-openfga-authz-bridge.yml
             mode: source
+            trigger: tag
           - workflow: ci-rag.yml
             mode: force
+            trigger: tag
           - workflow: ci-scheduler.yml
             mode: standard
+            trigger: tag
           - workflow: ci-skill-scanner.yml
             mode: force
+            trigger: tag
           - workflow: ci-slack-bot.yml
             mode: force
+            trigger: tag
           - workflow: ci-sqs-webhook-proxy-receiver.yml
             mode: standard
+            trigger: tag
           - workflow: ci-github-webhook-gateway.yml
             mode: standard
+            trigger: tag
           - workflow: ci-tome-agent.yml
             mode: source-required
+            trigger: dispatch
           - workflow: ci-webex-bot.yml
             mode: force
+            trigger: tag
 
     steps:
       - name: Harden runner
@@ -205,6 +222,7 @@ jobs:
           SOURCE_SHA: ${{ needs.prepare-release.outputs.release_sha }}
           WORKFLOW: ${{ matrix.workflow }}
           MODE: ${{ matrix.mode }}
+          TRIGGER: ${{ matrix.trigger }}
           WORKFLOW_REF: ${{ needs.prepare-release.outputs.release_tag }}
         shell: bash
         run: |
@@ -219,37 +237,66 @@ jobs:
             exit 1
           fi
 
-          command=(
-            gh workflow run "$WORKFLOW"
-            --repo "$GITHUB_REPOSITORY"
-            --ref "$WORKFLOW_REF"
-            -f "tag_version=$TAG_VERSION"
-            -f "repo_org=$REPO_ORG"
-          )
+          run_url=""
+          run_id=""
 
-          case "$MODE" in
-            force|force-source)
-              command+=(-f force_build=true)
-              ;;
-          esac
+          # Workflows with a tag push trigger are already started by the release
+          # tag. Waiting for that run avoids a second build of the same image
+          # set. The two source-pinned workflows without a matching tag trigger
+          # continue to use workflow_dispatch.
+          if [[ "$TRIGGER" == "tag" && "$REPO_ORG" == "$GITHUB_REPOSITORY_OWNER" ]]; then
+            for attempt in {1..24}; do
+              run_id=$(gh run list \
+                --workflow "$WORKFLOW" \
+                --repo "$GITHUB_REPOSITORY" \
+                --limit 20 \
+                --json databaseId,headBranch,event \
+                --jq ".[] | select(.headBranch == \"$WORKFLOW_REF\" and .event == \"push\") | .databaseId" \
+                | head -n 1)
+              if [[ -n "$run_id" ]]; then
+                break
+              fi
+              echo "Waiting for tag-triggered $WORKFLOW run (attempt $attempt/24)..."
+              sleep 5
+            done
+            if [[ -z "$run_id" ]]; then
+              echo "Could not find tag-triggered $WORKFLOW run for $WORKFLOW_REF"
+              exit 1
+            fi
+            run_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$run_id"
+          else
+            command=(
+              gh workflow run "$WORKFLOW"
+              --repo "$GITHUB_REPOSITORY"
+              --ref "$WORKFLOW_REF"
+              -f "tag_version=$TAG_VERSION"
+              -f "repo_org=$REPO_ORG"
+            )
 
-          case "$MODE" in
-            source|force-source|mcp|source-required)
-              command+=(-f "source_sha=$SOURCE_SHA")
-              ;;
-          esac
+            case "$MODE" in
+              force|force-source)
+                command+=(-f force_build=true)
+                ;;
+            esac
 
-          if [[ "$MODE" == "mcp" ]]; then
-            command+=(-f build_all=true)
+            case "$MODE" in
+              source|force-source|mcp|source-required)
+                command+=(-f "source_sha=$SOURCE_SHA")
+                ;;
+            esac
+
+            if [[ "$MODE" == "mcp" ]]; then
+              command+=(-f build_all=true)
+            fi
+
+            run_url=$("${command[@]}")
+            if [[ ! "$run_url" =~ /actions/runs/([0-9]+)$ ]]; then
+              echo "Could not identify child workflow run from: $run_url"
+              exit 1
+            fi
+            run_id="${BASH_REMATCH[1]}"
           fi
 
-          run_url=$("${command[@]}")
-          if [[ ! "$run_url" =~ /actions/runs/([0-9]+)$ ]]; then
-            echo "Could not identify child workflow run from: $run_url"
-            exit 1
-          fi
-
-          run_id="${BASH_REMATCH[1]}"
           echo "Child workflow: $run_url" >> "$GITHUB_STEP_SUMMARY"
           gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status
 
@@ -278,17 +325,41 @@ jobs:
             exit 1
           fi
 
-          run_url=$(gh workflow run helm.yml \
-            --repo "$GITHUB_REPOSITORY" \
-            --ref "$WORKFLOW_REF" \
-            -f publish_all=true \
-            -f "repo_org=$REPO_ORG")
+          if [[ "$REPO_ORG" == "$GITHUB_REPOSITORY_OWNER" ]]; then
+            run_id=""
+            for attempt in {1..24}; do
+              run_id=$(gh run list \
+                --workflow ci-helm.yml \
+                --repo "$GITHUB_REPOSITORY" \
+                --limit 20 \
+                --json databaseId,headBranch,event \
+                --jq ".[] | select(.headBranch == \"$WORKFLOW_REF\" and .event == \"push\") | .databaseId" \
+                | head -n 1)
+              if [[ -n "$run_id" ]]; then
+                break
+              fi
+              echo "Waiting for tag-triggered Helm publish (attempt $attempt/24)..."
+              sleep 5
+            done
+            if [[ -z "$run_id" ]]; then
+              echo "Could not find tag-triggered Helm workflow run for $WORKFLOW_REF"
+              exit 1
+            fi
+            run_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$run_id"
+          else
+            run_url=$(gh workflow run ci-helm.yml \
+              --repo "$GITHUB_REPOSITORY" \
+              --ref "$WORKFLOW_REF" \
+              -f "tag_version=$TAG_VERSION" \
+              -f force_build=true \
+              -f "repo_org=$REPO_ORG")
 
-          if [[ ! "$run_url" =~ /actions/runs/([0-9]+)$ ]]; then
-            echo "Could not identify Helm workflow run from: $run_url"
-            exit 1
+            if [[ ! "$run_url" =~ /actions/runs/([0-9]+)$ ]]; then
+              echo "Could not identify Helm workflow run from: $run_url"
+              exit 1
+            fi
+            run_id="${BASH_REMATCH[1]}"
           fi
 
-          run_id="${BASH_REMATCH[1]}"
           echo "Helm workflow: $run_url" >> "$GITHUB_STEP_SUMMARY"
           gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status

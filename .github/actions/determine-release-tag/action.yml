@@ -2,7 +2,8 @@ name: 'Determine Release Tag'
 description: >
   Determines the version tag for a CI build based on trigger type.
   Supports tag push (primary), workflow_dispatch, and push-to-main (legacy fallback).
-  Recognises -dev.N, -rc.N, -hotfix.N, -chart.M suffixes, and mirror component
+  Recognises -dev.N, -rc.N, -hotfix.N, -chart.M suffixes, mirror release
+  suffixes (-outshift.N and -outshift.YYYYMMDD.N), and mirror component
   suffixes: -ui-<sha>, -tome-<sha>, -apps-<sha>.
 
 inputs:
@@ -74,8 +75,8 @@ runs:
         gh run watch "$RUN_ID" --exit-status
 
         git fetch --tags --force
-        # Match: x.y.z, x.y.z-dev.N, x.y.z-rc.N, x.y.z-hotfix.N, and any of those with -chart.M
-        TAG=$(git tag --points-at ${{ github.sha }} | grep -E '^[0-9]+\.[0-9]+\.[0-9]+(-dev\.[0-9]+|-rc\.[0-9]+|-hotfix\.[0-9]+)?(-chart\.[0-9]+)?$' | head -n 1)
+        # Match standard release tags, mirror release tags, and chart variants.
+        TAG=$(git tag --points-at ${{ github.sha }} | grep -E '^[0-9]+\.[0-9]+\.[0-9]+(-outshift\.[0-9]+(\.[0-9]+)?|-dev\.[0-9]+|-rc\.[0-9]+|-hotfix\.[0-9]+)?(-chart\.[0-9]+)?$' | head -n 1)
 
         if [ -z "$TAG" ]; then
           echo "❌ auto-tag.yml finished but no tag found on this commit"
@@ -106,10 +107,11 @@ runs:
         # Accepted formats:
         #   x.y.z
         #   x.y.z-dev.N / -rc.N / -hotfix.N  (with optional -chart.M suffix)
+        #   x.y.z-outshift.N / x.y.z-outshift.YYYYMMDD.N
         #   x.y.z-ui-<sha> / -tome-<sha> / -apps-<sha>  (mirror component releases)
         #   x.y.z-ui-main-<sha> / -tome-release-<sha> / ...  (mirror releases with a
         #   main/release branch tag inserted before the sha, see release-caipe-ui.yml)
-        if [[ -n "$FINAL_TAG" ]] && ! [[ "$FINAL_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-dev\.[0-9]+|-rc\.[0-9]+|-hotfix\.[0-9]+)?(-chart\.[0-9]+)?$ ]] \
+        if [[ -n "$FINAL_TAG" ]] && ! [[ "$FINAL_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-outshift\.[0-9]+(\.[0-9]+)?|-dev\.[0-9]+|-rc\.[0-9]+|-hotfix\.[0-9]+)?(-chart\.[0-9]+)?$ ]] \
                                  && ! [[ "$FINAL_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+-(ui|tome|apps)-((main|release)-)?[0-9a-f]+$ ]]; then
           echo "❌ Unexpected tag format: $FINAL_TAG"
           exit 1

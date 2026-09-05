@@ -56,8 +56,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: load-config
     env:
-      CI_RAG_APP_ID: ${{ secrets.CI_BUILD_APP_ID || secrets.GHA_APP_ID }}
-      CI_RAG_APP_PRIVATE_KEY: ${{ secrets.CI_BUILD_APP_PRIVATE_KEY || secrets.GHA_APP_PRIVATE_KEY }}
+      CI_RAG_APP_ID: ${{ secrets.CI_BUILD_APP_ID || secrets.GHA_APP_ID || secrets.CI_RELEASE_APP_ID }}
+      CI_RAG_APP_PRIVATE_KEY: ${{ secrets.CI_BUILD_APP_PRIVATE_KEY || secrets.GHA_APP_PRIVATE_KEY || secrets.CI_RELEASE_APP_PRIVATE_KEY }}
     outputs:
       should_build: ${{ steps.set-matrix.outputs.should_build }}
       should_retag: ${{ steps.set-matrix.outputs.should_retag }}
@@ -72,7 +72,7 @@ jobs:
         if: ${{ github.event_name != 'pull_request' && env.CI_RAG_APP_ID != '' && env.CI_RAG_APP_PRIVATE_KEY != '' }}
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
-          app-id: ${{ env.CI_RAG_APP_ID }}
+          client-id: ${{ env.CI_RAG_APP_ID }}
           private-key: ${{ env.CI_RAG_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
@@ -229,8 +229,8 @@ jobs:
 
     env:
       REGISTRY: ghcr.io
-      CI_RAG_APP_ID: ${{ secrets.CI_BUILD_APP_ID || secrets.GHA_APP_ID }}
-      CI_RAG_APP_PRIVATE_KEY: ${{ secrets.CI_BUILD_APP_PRIVATE_KEY || secrets.GHA_APP_PRIVATE_KEY }}
+      CI_RAG_APP_ID: ${{ secrets.CI_BUILD_APP_ID || secrets.GHA_APP_ID || secrets.CI_RELEASE_APP_ID }}
+      CI_RAG_APP_PRIVATE_KEY: ${{ secrets.CI_BUILD_APP_PRIVATE_KEY || secrets.GHA_APP_PRIVATE_KEY || secrets.CI_RELEASE_APP_PRIVATE_KEY }}
       # For slim variant, append -slim to image name suffix in tags (not the image name itself)
       IMAGE_NAME: ${{ inputs.repo_org || github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}caipe-rag-${{ matrix.component }}
       DOCKERFILE: ai_platform_engineering/knowledge_bases/rag/build/Dockerfile.${{ matrix.component }}
@@ -246,7 +246,7 @@ jobs:
         if: ${{ github.event_name != 'pull_request' && env.CI_RAG_APP_ID != '' && env.CI_RAG_APP_PRIVATE_KEY != '' }}
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
-          app-id: ${{ env.CI_RAG_APP_ID }}
+          client-id: ${{ env.CI_RAG_APP_ID }}
           private-key: ${{ env.CI_RAG_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
@@ -437,8 +437,8 @@ jobs:
       REGISTRY: ghcr.io
       IMAGE_NAME: ${{ inputs.repo_org || github.repository_owner }}/${{ needs.determine-changes.outputs.image_prefix }}caipe-rag-${{ matrix.component }}
       DOCKERFILE: ai_platform_engineering/knowledge_bases/rag/build/Dockerfile.${{ matrix.component }}
-      CI_RAG_APP_ID: ${{ secrets.CI_BUILD_APP_ID || secrets.GHA_APP_ID }}
-      CI_RAG_APP_PRIVATE_KEY: ${{ secrets.CI_BUILD_APP_PRIVATE_KEY || secrets.GHA_APP_PRIVATE_KEY }}
+      CI_RAG_APP_ID: ${{ secrets.CI_BUILD_APP_ID || secrets.GHA_APP_ID || secrets.CI_RELEASE_APP_ID }}
+      CI_RAG_APP_PRIVATE_KEY: ${{ secrets.CI_BUILD_APP_PRIVATE_KEY || secrets.GHA_APP_PRIVATE_KEY || secrets.CI_RELEASE_APP_PRIVATE_KEY }}
 
     steps:
       - name: 🔒 Harden runner
@@ -451,7 +451,7 @@ jobs:
         if: ${{ env.CI_RAG_APP_ID != '' && env.CI_RAG_APP_PRIVATE_KEY != '' }}
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
-          app-id: ${{ env.CI_RAG_APP_ID }}
+          client-id: ${{ env.CI_RAG_APP_ID }}
           private-key: ${{ env.CI_RAG_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
@@ -626,15 +626,15 @@ jobs:
       needs.determine-changes.outputs.tag_version != '' &&
       !contains(needs.determine-changes.outputs.tag_version, '-')
     env:
-      CI_RAG_APP_ID: ${{ secrets.CI_BUILD_APP_ID || secrets.GHA_APP_ID }}
-      CI_RAG_APP_PRIVATE_KEY: ${{ secrets.CI_BUILD_APP_PRIVATE_KEY || secrets.GHA_APP_PRIVATE_KEY }}
+      CI_RAG_APP_ID: ${{ secrets.CI_BUILD_APP_ID || secrets.GHA_APP_ID || secrets.CI_RELEASE_APP_ID }}
+      CI_RAG_APP_PRIVATE_KEY: ${{ secrets.CI_BUILD_APP_PRIVATE_KEY || secrets.GHA_APP_PRIVATE_KEY || secrets.CI_RELEASE_APP_PRIVATE_KEY }}
     steps:
       - name: 🔑 Generate GitHub App token
         id: app-token
         if: ${{ env.CI_RAG_APP_ID != '' && env.CI_RAG_APP_PRIVATE_KEY != '' }}
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
-          app-id: ${{ env.CI_RAG_APP_ID }}
+          client-id: ${{ env.CI_RAG_APP_ID }}
           private-key: ${{ env.CI_RAG_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}

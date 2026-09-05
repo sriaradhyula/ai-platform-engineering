@@ -79,15 +79,15 @@ jobs:
       image_prefix: ${{ steps.set-matrix.outputs.image_prefix }}
     env:
       ALL_AGENTS: ${{ needs.load-config.outputs.all_agents }}
-      CI_MCP_APP_ID: ${{ secrets.CI_MCP_APP_ID || secrets.GHA_APP_ID }}
-      CI_MCP_APP_PRIVATE_KEY: ${{ secrets.CI_MCP_APP_PRIVATE_KEY || secrets.GHA_APP_PRIVATE_KEY }}
+      CI_MCP_APP_ID: ${{ secrets.CI_MCP_APP_ID || secrets.GHA_APP_ID || secrets.CI_RELEASE_APP_ID }}
+      CI_MCP_APP_PRIVATE_KEY: ${{ secrets.CI_MCP_APP_PRIVATE_KEY || secrets.GHA_APP_PRIVATE_KEY || secrets.CI_RELEASE_APP_PRIVATE_KEY }}
     steps:
       - name: 🔑 Generate GitHub App token
         id: app-token
         if: ${{ env.CI_MCP_APP_ID != '' && env.CI_MCP_APP_PRIVATE_KEY != '' }}
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
-          app-id: ${{ env.CI_MCP_APP_ID }}
+          client-id: ${{ env.CI_MCP_APP_ID }}
           private-key: ${{ env.CI_MCP_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
@@ -552,15 +552,15 @@ jobs:
       needs.determine-agents.outputs.tag_version != '' &&
       !contains(needs.determine-agents.outputs.tag_version, '-')
     env:
-      CI_MCP_APP_ID: ${{ secrets.CI_MCP_APP_ID || secrets.GHA_APP_ID }}
-      CI_MCP_APP_PRIVATE_KEY: ${{ secrets.CI_MCP_APP_PRIVATE_KEY || secrets.GHA_APP_PRIVATE_KEY }}
+      CI_MCP_APP_ID: ${{ secrets.CI_MCP_APP_ID || secrets.GHA_APP_ID || secrets.CI_RELEASE_APP_ID }}
+      CI_MCP_APP_PRIVATE_KEY: ${{ secrets.CI_MCP_APP_PRIVATE_KEY || secrets.GHA_APP_PRIVATE_KEY || secrets.CI_RELEASE_APP_PRIVATE_KEY }}
     steps:
       - name: 🔑 Generate GitHub App token
         id: app-token
         if: ${{ env.CI_MCP_APP_ID != '' && env.CI_MCP_APP_PRIVATE_KEY != '' }}
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
-          app-id: ${{ env.CI_MCP_APP_ID }}
+          client-id: ${{ env.CI_MCP_APP_ID }}
           private-key: ${{ env.CI_MCP_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
