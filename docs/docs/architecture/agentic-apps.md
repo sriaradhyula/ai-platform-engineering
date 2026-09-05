@@ -17,7 +17,6 @@ The built-in packages available to operators in this change are:
 - Weather Lab
 - OSS Repo Report Card
 - Jira Project Dashboard
-- Speakers Collective
 
 The TOME knowledge product remains part of CAIPE, but it is not an Agentic App
 dashboard.

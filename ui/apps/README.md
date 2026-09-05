@@ -37,11 +37,8 @@ flowchart LR
 | LiteLLM | `agent-litellm-finops` | `litellm_app` | daily activity, model inventory |
 | Weather | `agent-weather-agent` | `weather_app` | live weather dashboard |
 | OSS Repo Report Card | `agent-oss-repo-report-card` | `oss_repo_report_card` | report card, Markdown report |
-| Speakers Collective | `agent-speakers-collective` | `speakers_collective` | governed read, proposal, review, and publication lifecycle |
-
-The first five contracts are read-only. Speakers Collective remains the reference for governed CRUD:
-an agent creates a pending proposal, an authorized human reviews it, and publication is a separate
-explicit action.
+The source-backed contracts are read-only. Jira Project Dashboard remains a host-configured
+integration with project metrics and action cards.
 
 ## Interactive invocation contract
 
@@ -112,13 +109,7 @@ explicit user preference, not an app default.
 - `/` renders either the hosted GRID surface or standalone view according to
   the gateway-owned `X-CAIPE-Surface` header.
 - `/example` renders a static, network-free fixture for FinOps, Weather,
-  LiteLLM Operations, OSS Repo Report Card, and Speakers Collective.
-
-Speakers Collective reads a reviewed JSON source from
-`SPEAKERS_COLLECTIVE_DATA_FILE`. The source contains dashboard metadata,
-teams, scan freshness, and events. When the variable is absent, the runtime
-uses a visibly labeled neutral fixture. Organization-specific events and links
-belong in environment-owned configuration, not reusable source.
+  LiteLLM Operations, and OSS Repo Report Card.
 
 LiteLLM Operations invokes `LITELLM_AGENT_ID` (default
 `agent-litellm-finops`) through the normal conversation and chat APIs. The

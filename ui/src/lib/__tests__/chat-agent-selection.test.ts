@@ -74,7 +74,7 @@ describe("resolveUsableChatAgent", () => {
           success: true,
           data: [
             { _id: "hello-world", name: "Hello World", enabled: true },
-            { _id: "agent-speakers-collective", name: "Speakers Collective Agent", enabled: true },
+            { _id: "agent-jira-agent", name: "Jira Project Dashboard Agent", enabled: true },
           ],
         });
       }
@@ -83,12 +83,12 @@ describe("resolveUsableChatAgent", () => {
 
     await expect(
       resolveUsableChatAgent({
-        requestedAgentId: "agent-speakers-collective",
+        requestedAgentId: "agent-jira-agent",
         requireAvailableAgent: true,
       }),
     ).resolves.toEqual({
-      id: "agent-speakers-collective",
-      name: "Speakers Collective Agent",
+      id: "agent-jira-agent",
+      name: "Jira Project Dashboard Agent",
       source: "configured",
     });
   });
@@ -109,9 +109,9 @@ describe("resolveUsableChatAgent", () => {
     }) as typeof fetch;
 
     await expect(
-      resolveUsableChatAgent({ requestedAgentId: "agent-speakers-collective" }),
+      resolveUsableChatAgent({ requestedAgentId: "agent-jira-agent" }),
     ).rejects.toThrow(
-      'Configured agent "agent-speakers-collective" is unavailable or not authorized',
+      'Configured agent "agent-jira-agent" is unavailable or not authorized',
     );
   });
 });

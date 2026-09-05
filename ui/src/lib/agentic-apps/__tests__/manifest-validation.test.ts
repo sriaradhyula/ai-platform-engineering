@@ -8,7 +8,6 @@ import { OSS_REPO_MANAGEMENT_MANIFEST } from "../../../../apps/agentic-apps/oss-
 import { WEATHER_MANIFEST } from "../../../../apps/agentic-apps/weather/manifest.mjs";
 import { JIRA_PROJECT_DASHBOARD_MANIFEST } from "../../../../apps/agentic-apps/jira-project-dashboard/manifest.mjs";
 import { AGENTIC_SDLC_MANIFEST } from "../../../../apps/agentic-sdlc/manifest.mjs";
-import { SPEAKERS_COLLECTIVE_MANIFEST } from "../../../../apps/agentic-apps/speakers-collective/manifest.mjs";
 
 function manifest(): Record<string, unknown> {
   return {
@@ -56,7 +55,6 @@ describe("Agentic App manifest microfrontend contract", () => {
     LITELLM_MANIFEST,
     OSS_REPO_MANAGEMENT_MANIFEST,
     JIRA_PROJECT_DASHBOARD_MANIFEST,
-    SPEAKERS_COLLECTIVE_MANIFEST,
   ];
 
   it.each([
@@ -66,7 +64,6 @@ describe("Agentic App manifest microfrontend contract", () => {
     ["litellm", LITELLM_MANIFEST],
     ["oss-repo-management", OSS_REPO_MANAGEMENT_MANIFEST],
     ["jira-project-dashboard", JIRA_PROJECT_DASHBOARD_MANIFEST],
-    ["speakers-collective", SPEAKERS_COLLECTIVE_MANIFEST],
   ])("declares a valid fail-closed action and scope contract for %s", (_appId, candidate) => {
     const result = validateAgenticAppManifest(candidate);
 
@@ -107,7 +104,6 @@ describe("Agentic App manifest microfrontend contract", () => {
     ["weather", WEATHER_MANIFEST],
     ["litellm", LITELLM_MANIFEST],
     ["oss-repo-management", OSS_REPO_MANAGEMENT_MANIFEST],
-    ["speakers-collective", SPEAKERS_COLLECTIVE_MANIFEST],
   ])("offers a consistent text-size preference for %s", (_appId, candidate) => {
     const result = validateAgenticAppManifest(candidate);
 

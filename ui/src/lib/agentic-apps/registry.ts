@@ -7,7 +7,6 @@ import { WEATHER_MANIFEST } from "../../../apps/agentic-apps/weather/manifest.mj
 import { OSS_REPO_MANAGEMENT_MANIFEST } from "../../../apps/agentic-apps/oss-repo-management/manifest.mjs";
 import { JIRA_PROJECT_DASHBOARD_MANIFEST } from "../../../apps/agentic-apps/jira-project-dashboard/manifest.mjs";
 import { LITELLM_MANIFEST } from "../../../apps/agentic-apps/litellm/manifest.mjs";
-import { SPEAKERS_COLLECTIVE_MANIFEST } from "../../../apps/agentic-apps/speakers-collective/manifest.mjs";
 
 /**
  * Built-in agentic app catalog. The platform itself ships only the apps that
@@ -43,7 +42,6 @@ const BUILT_IN_APPS: BuiltInAppEntry[] = [
   { manifest: LITELLM_MANIFEST as AgenticAppManifest },
   { manifest: OSS_REPO_MANAGEMENT_MANIFEST as AgenticAppManifest },
   { manifest: JIRA_PROJECT_DASHBOARD_MANIFEST as AgenticAppManifest },
-  { manifest: SPEAKERS_COLLECTIVE_MANIFEST as AgenticAppManifest },
 ];
 
 const BUILT_IN_APP_IDS: readonly string[] = BUILT_IN_APPS.map((entry) => entry.manifest.id);

@@ -24,10 +24,6 @@ import {
   LITELLM_APP_ID,
   LITELLM_MANIFEST,
 } from "../../../apps/agentic-apps/litellm/manifest.mjs";
-import {
-  SPEAKERS_COLLECTIVE_APP_ID,
-  SPEAKERS_COLLECTIVE_MANIFEST,
-} from "../../../apps/agentic-apps/speakers-collective/manifest.mjs";
 
 /**
  * Built-in marketplace rows (metadata + validated manifest shape only).
@@ -89,15 +85,6 @@ export const BUILTIN_AGENTIC_APP_PACKAGE_SEEDS = [
     catalog: {
       categories: ["project-management", "jira"],
       capabilities: ["jira-issues", "sprint-summary", "blocker-analysis", "embedded-agent", "action-cards", "structured-output"],
-    },
-  },
-  {
-    packageId: SPEAKERS_COLLECTIVE_APP_ID,
-    source: "builtin" as const,
-    manifest: SPEAKERS_COLLECTIVE_MANIFEST,
-    catalog: {
-      categories: ["community", "events", "speaking"],
-      capabilities: ["cfp-discovery", "deadline-tracking", "team-filtering", "assistant-context-bridge"],
     },
   },
 ] as const;

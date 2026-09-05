@@ -103,13 +103,6 @@ jobs:
             portEnv: LITELLM_APP_PORT
             jwtDisabledEnv: AGENTIC_APP_LITELLM_JWT_DISABLED
             pagePath: /
-          - app: speakers-collective
-            port: 3043
-            command: node apps/agentic-apps/speakers-collective/server.mjs
-            portEnv: SPEAKERS_COLLECTIVE_APP_PORT
-            jwtDisabledEnv: AGENTIC_APP_SPEAKERS_COLLECTIVE_JWT_DISABLED
-            pagePath: /
-
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
@@ -186,11 +179,6 @@ jobs:
           case "$APP" in
             finops|weather|oss-repo-management|litellm)
               grep --fixed-strings --quiet "createAgenticAppConversation" <<< "$PAGE_HTML"
-              EXAMPLE_HTML=$(curl --fail --silent --show-error "http://127.0.0.1:${PORT}/example")
-              grep --fixed-strings --quiet "STATIC EXAMPLE · SAMPLE DATA · NO LIVE CONNECTION" <<< "$EXAMPLE_HTML"
-              ;;
-            speakers-collective)
-              grep --fixed-strings --quiet "caipe.agenticApp.context.v1" <<< "$PAGE_HTML"
               EXAMPLE_HTML=$(curl --fail --silent --show-error "http://127.0.0.1:${PORT}/example")
               grep --fixed-strings --quiet "STATIC EXAMPLE · SAMPLE DATA · NO LIVE CONNECTION" <<< "$EXAMPLE_HTML"
               ;;
