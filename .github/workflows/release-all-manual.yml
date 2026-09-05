@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_version:
-        description: "Mirror image/chart version (for example, 1.0.0-outshift.1)"
+        description: "Mirror image/chart version (for example, 1.0.0-outshift.20260905.1)"
         required: true
         type: string
       repo_org:
@@ -75,10 +75,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ ! "$RELEASE_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-outshift\.[0-9]+)?$ ]]; then
+          if [[ ! "$RELEASE_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-outshift\.[0-9]+|-outshift\.[0-9]{8}\.[0-9]+)?$ ]]; then
             echo "Invalid tag_version: $RELEASE_TAG"
-            echo "Expected x.y.z or x.y.z-outshift.N"
+            echo "Expected x.y.z, x.y.z-outshift.N, or x.y.z-outshift.YYYYMMDD.N"
             exit 1
+          fi
+
+          if [[ "$RELEASE_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+-outshift\.([0-9]{8})\.([0-9]+)$ ]]; then
+            RELEASE_DATE="${BASH_REMATCH[1]}"
+            if ! python -c \
+              'import sys; from datetime import datetime; datetime.strptime(sys.argv[1], "%Y%m%d")' \
+              "$RELEASE_DATE" 2>/dev/null; then
+              echo "Invalid UTC date in tag_version: $RELEASE_DATE"
+              exit 1
+            fi
           fi
 
           if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
@@ -115,6 +125,8 @@ jobs:
           PYPROJECT_VERSION="$RELEASE_TAG"
           if [[ "$RELEASE_TAG" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-outshift\.([0-9]+)$ ]]; then
             PYPROJECT_VERSION="${BASH_REMATCH[1]}+outshift.${BASH_REMATCH[2]}"
+          elif [[ "$RELEASE_TAG" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-outshift\.([0-9]{8})\.([0-9]+)$ ]]; then
+            PYPROJECT_VERSION="${BASH_REMATCH[1]}+outshift.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
           fi
           sed -i "s/^version = \".*\"/version = \"${PYPROJECT_VERSION}\"/" pyproject.toml
           uv lock

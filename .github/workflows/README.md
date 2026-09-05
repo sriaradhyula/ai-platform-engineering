@@ -11,13 +11,14 @@ See the `.github/workflows/` directory for the full list of CI/CD workflows.
 Use **[Release] Build All Images and Helm Charts** (`release-all-manual.yml`)
 to create a mirror release and publish every image workflow and both local
 charts from one immutable revision. Provide a version such as
-`1.0.0-outshift.1`; the workflow updates all `Chart.yaml` files and local chart
-dependency references, commits and tags the release, then dispatches the child
-publishers from that tag. For an `-outshift.N` tag, Python metadata uses the
-PEP 440 equivalent `+outshift.N`. When the target GHCR namespace differs from
-the default `cisco-eti` namespace, set `repo_org` to that namespace. The
-workflow dispatches the local `helm.yml` publisher with `publish_all=true` and
-passes the same namespace to the image workflows.
+`1.0.0-outshift.20260905.1`; the workflow updates all `Chart.yaml` files and
+local chart dependency references, commits and tags the release, then dispatches the child
+publishers from that tag. For an `-outshift` tag, Python metadata uses the
+PEP 440 equivalent local version (for example, `1.0.0+outshift.20260905.1`).
+When the target GHCR namespace differs from the default `cisco-eti` namespace,
+set `repo_org` to that namespace. The workflow dispatches the local `helm.yml`
+publisher with `publish_all=true` and passes the same namespace to the image
+workflows.
 
 ## General Information
 
