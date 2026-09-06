@@ -13,6 +13,7 @@ VisibilityBreakdown,
 import { AsyncStatsCard } from "@/components/admin/insights/AsyncStatsCard";
 import { AutonomousTeamAccessPanel } from "@/components/admin/autonomous/AutonomousTeamAccessPanel";
 import { ReviewConfigsTab } from "@/components/admin/settings/ReviewConfigsTab";
+import { ReleaseNotesSettingsTab } from "@/components/admin/settings/ReleaseNotesSettingsTab";
 import {
   AdminNavigation,
   adminDestinationHref,
@@ -62,7 +63,6 @@ import { AdminCredentialManagementPanel } from "@/components/credentials/AdminCr
 import { WorkspacePageHeader } from "@/components/layout/WorkspacePageHeader";
 import { WorkspaceShell } from "@/components/layout/WorkspaceShell";
 import { PlatformAccessSettings } from "@/components/settings/sections/PlatformAccessSettings";
-import { PlatformAnnouncementsSettings } from "@/components/settings/sections/PlatformAnnouncementsSettings";
 import { PlatformDefaultsSettings } from "@/components/settings/sections/PlatformDefaultsSettings";
 import { Button } from "@/components/ui/button";
 import {
@@ -1686,7 +1686,10 @@ function AdminPage() {
 
               {tabGateValues.platform_settings && (
                 <TabsContent value="announcements" className="space-y-4">
-                  <PlatformAnnouncementsSettings readOnly={isSimulationActive} />
+                  <ReleaseNotesSettingsTab
+                    isAdmin={effectiveOrganizationAdmin}
+                    readOnly={isSimulationActive}
+                  />
                 </TabsContent>
               )}
 
