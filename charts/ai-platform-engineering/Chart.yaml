@@ -50,6 +50,14 @@ dependencies:
         parent: global.enabledSubAgents.confluence
   - name: mcp-server
     version: 1.0.0-outshift.20260905.7 # Do NOT bump this. It will be updated automatically using the PR or release workflow
+    alias: mcp-figma
+    tags:
+      - mcp-figma
+    import-values:
+      - child: agentExports.data
+        parent: global.enabledSubAgents.figma
+  - name: mcp-server
+    version: 1.0.0-outshift.20260905.7 # Do NOT bump this. It will be updated automatically using the PR or release workflow
     alias: mcp-github
     tags:
       - mcp-github
