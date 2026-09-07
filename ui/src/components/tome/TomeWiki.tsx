@@ -96,6 +96,7 @@ import {
 } from "@/lib/tome/document-import-formats";
 import {
   TOME_TRACKED_ISSUE_LABELS,
+  TOME_TRACKER_PREFIX,
   type TomeTrackedIssueLabel,
 } from "@/lib/tome/issue-filter-views";
 import { cn } from "@/lib/utils";
@@ -317,17 +318,14 @@ export function TomeWiki({ slug }: { slug: string }) {
   const isArea = projectType === "area";
   const isSynthesized = isSynthesizedType(projectType);
   const canEdit = data?.canEdit ?? false;
-  const [customIssueTrackers, setCustomIssueTrackers] = useState<
-    TomeTrackedIssueLabel[]
-  >([]);
+  const [issueTrackers, setIssueTrackers] = useState<TomeTrackedIssueLabel[]>(
+    TOME_TRACKED_ISSUE_LABELS,
+  );
+  const [trackerPrefix, setTrackerPrefix] = useState(TOME_TRACKER_PREFIX);
   const [trackerDialogOpen, setTrackerDialogOpen] = useState(false);
   const [trackerSuffix, setTrackerSuffix] = useState("");
   const [trackerError, setTrackerError] = useState<string | null>(null);
   const [creatingTracker, setCreatingTracker] = useState(false);
-  const issueTrackers = useMemo(
-    () => [...TOME_TRACKED_ISSUE_LABELS, ...customIssueTrackers],
-    [customIssueTrackers],
-  );
   const activeTrackedIssueLabel = useMemo(() => {
     if (view.kind !== "issues" || !view.label) return undefined;
     return issueTrackers.find(
@@ -340,7 +338,10 @@ export function TomeWiki({ slug }: { slug: string }) {
       .then(async (response) => {
         const body = await response.json().catch(() => null);
         if (!response.ok || !Array.isArray(body?.data?.trackers)) return;
-        if (!cancelled) setCustomIssueTrackers(body.data.trackers);
+        if (!cancelled) {
+          setIssueTrackers(body.data.trackers);
+          setTrackerPrefix(typeof body.data.prefix === "string" ? body.data.prefix : TOME_TRACKER_PREFIX);
+        }
       })
       .catch(() => undefined);
     return () => {
@@ -366,7 +367,8 @@ export function TomeWiki({ slug }: { slug: string }) {
       if (!response.ok || !Array.isArray(body?.data?.trackers)) {
         throw new Error(body?.error ?? "Could not create tracked label");
       }
-      setCustomIssueTrackers(body.data.trackers);
+      setIssueTrackers(body.data.trackers);
+      setTrackerPrefix(typeof body.data.prefix === "string" ? body.data.prefix : TOME_TRACKER_PREFIX);
       setTrackerSuffix("");
       setTrackerDialogOpen(false);
     } catch (createError) {
@@ -1359,9 +1361,11 @@ export function TomeWiki({ slug }: { slug: string }) {
                                 GitHub label
                               </label>
                               <div className="flex rounded-md border bg-background focus-within:ring-2 focus-within:ring-ring">
-                                <code className="flex items-center border-r bg-muted px-3 text-sm text-muted-foreground">
-                                  tome:
-                                </code>
+                                {trackerPrefix && (
+                                  <code className="flex items-center border-r bg-muted px-3 text-sm text-muted-foreground">
+                                    {trackerPrefix}
+                                  </code>
+                                )}
                                 <Input
                                   id={`tome-tracker-suffix-${slug}`}
                                   value={trackerSuffix}
@@ -1372,7 +1376,10 @@ export function TomeWiki({ slug }: { slug: string }) {
                                 />
                               </div>
                               <p className="text-xs text-muted-foreground">
-                                Use lowercase letters, numbers, and hyphens. The prefix is reserved for TOME trackers.
+                                Use lowercase letters, numbers, and hyphens.
+                                {trackerPrefix
+                                  ? ` The ${trackerPrefix} prefix is reserved for TOME trackers.`
+                                  : " TOME Admin has disabled the shared label prefix."}
                               </p>
                             </div>
                             {trackerError && (

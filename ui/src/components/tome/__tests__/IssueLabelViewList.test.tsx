@@ -9,14 +9,14 @@ describe("IssueLabelViewList", () => {
     render(
       <IssueLabelViewList
         labels={TOME_TRACKED_ISSUE_LABELS}
-        activeLabel="tome:in-progress"
+        activeLabel="tome:needs attention"
         onSelect={onSelect}
       />,
     );
 
     expect(screen.getByText("Critical")).toBeInTheDocument();
-    expect(screen.getByText("In Progress")).toBeInTheDocument();
-    expect(screen.getByText("Completed")).toBeInTheDocument();
+    expect(screen.getByText("Needs Attention")).toBeInTheDocument();
+    expect(screen.getByText("Decisions")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Critical" }));
     expect(onSelect).toHaveBeenCalledWith("tome:critical");
   });

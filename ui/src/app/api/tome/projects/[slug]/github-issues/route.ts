@@ -29,7 +29,10 @@ import {
   loadTomeIssueCache,
   upsertCachedTomeIssue,
 } from "@/lib/tome/github-issue-cache";
-import type { TomeTrackedIssueLabel } from "@/lib/tome/issue-filter-views";
+import {
+  matchesTomeTrackedIssueLabel,
+  type TomeTrackedIssueLabel,
+} from "@/lib/tome/issue-filter-views";
 import { listTomeTrackedIssueLabels } from "@/lib/tome/issue-tracker-store";
 import { loadTomeProject, requireTomeEditor } from "@/lib/tome/tome-api";
 
@@ -81,7 +84,7 @@ function filteredIssues(
       .join(" ")
       .toLowerCase();
     return (
-      trackedLabels.some(({ label }) => normalized.has(label)) &&
+      trackedLabels.some((tracked) => matchesTomeTrackedIssueLabel(issue.labels, tracked)) &&
       (!labels.length || labels.every((label) => normalized.has(label))) &&
       (!labelsAny.length || labelsAny.some((label) => normalized.has(label))) &&
       (!contentType ||

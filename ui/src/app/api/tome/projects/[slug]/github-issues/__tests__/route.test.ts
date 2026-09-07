@@ -110,8 +110,8 @@ describe("GET Tome GitHub issues", () => {
     });
     mockListTrackedIssueLabels.mockResolvedValue([
       { id: "critical", label: "tome:critical", title: "Critical" },
-      { id: "in-progress", label: "tome:in-progress", title: "In Progress" },
-      { id: "completed", label: "tome:completed", title: "Completed" },
+      { id: "needs-attention", label: "tome:needs attention", title: "Needs Attention" },
+      { id: "decision", label: "tome:decision", title: "Decisions" },
     ]);
     mockUpsertCachedIssue.mockResolvedValue(undefined);
     mockUpdateIssueStatus.mockResolvedValue({
@@ -346,6 +346,45 @@ describe("GET Tome GitHub issues", () => {
     });
   });
 
+  it("keeps issues carrying a legacy label visible after configuration changes", async () => {
+    mockListTrackedIssueLabels.mockResolvedValue([
+      {
+        id: "critical",
+        label: "urgent",
+        title: "Urgent",
+        aliases: ["tome:critical"],
+      },
+    ]);
+    mockLoadIssueCache.mockResolvedValue({
+      issues: [{
+        repo: "example/service",
+        number: 42,
+        title: "Legacy label issue",
+        body: null,
+        url: "https://github.com/example/service/issues/42",
+        state: "open",
+        stateReason: null,
+        displayStatus: "open",
+        priority: null,
+        labels: ["tome:critical"],
+        assignees: [],
+        author: null,
+        milestone: null,
+        createdAt: null,
+        updatedAt: "2026-08-27T00:00:00Z",
+        closedAt: null,
+      }],
+      sync: [],
+      syncErrors: [],
+    });
+
+    const response = await GET(request(), context);
+
+    await expect(response.json()).resolves.toMatchObject({
+      data: { issues: [{ number: 42, labels: ["tome:critical"] }] },
+    });
+  });
+
   it("reconciles the MongoDB cache on manual refresh", async () => {
     await GET(request("?refresh=1"), context);
 
@@ -407,7 +446,7 @@ describe("GET Tome GitHub issues", () => {
           stateReason: null,
           displayStatus: "open",
           priority: "critical",
-          labels: ["tome:critical", "tome:completed"],
+          labels: ["tome:critical", "tome:decision"],
           assignees: [],
           author: null,
           milestone: null,
@@ -433,7 +472,7 @@ describe("GET Tome GitHub issues", () => {
       expect.objectContaining({
         number: 40,
         title: "Architecture decision",
-         labels: ["tome:critical", "tome:completed"],
+         labels: ["tome:critical", "tome:decision"],
       }),
     ]);
     expect(labelPayload.data.issues).not.toEqual(
@@ -450,7 +489,7 @@ describe("GET Tome GitHub issues", () => {
     });
 
     const discussionResponse = await GET(
-       request("?content_type=discussion&label=tome:completed"),
+       request("?content_type=discussion&label=tome:decision"),
       context,
     );
     await expect(discussionResponse.json()).resolves.toMatchObject({
@@ -458,7 +497,7 @@ describe("GET Tome GitHub issues", () => {
         issues: [{
           contentType: "discussion",
           number: 40,
-           labels: ["tome:critical", "tome:completed"],
+           labels: ["tome:critical", "tome:decision"],
         }],
       },
     });

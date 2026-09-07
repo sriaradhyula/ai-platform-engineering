@@ -12,12 +12,14 @@ import { TomeAnalyticsTab } from "@/components/tome/admin/TomeAnalyticsTab";
 import { TomeAuthorizationHealthTab } from "@/components/tome/admin/TomeAuthorizationHealthTab";
 import { AutoIngestCredentialHealthTab } from "@/components/tome/admin/AutoIngestCredentialHealthTab";
 import { ExperimentsTab } from "@/components/tome/admin/ExperimentsTab";
+import { IssueLabelsTab } from "@/components/tome/admin/IssueLabelsTab";
 import { useSubtabParam } from "@/hooks/use-subtab-param";
 
 const TOME_ADMIN_TABS = [
   "page-templates",
   "models",
   "experiments",
+  "issue-labels",
   "analytics",
   "authorization",
   "admins",
@@ -28,6 +30,7 @@ const TOME_ADMIN_TAB_LABELS: Record<TomeAdminTab, string> = {
   "page-templates": "Page Templates",
   models: "Models",
   experiments: "Model Evaluations",
+  "issue-labels": "Issue Labels",
   analytics: "Analytics",
   authorization: "RBAC Health",
   admins: "Admins",
@@ -96,6 +99,7 @@ function TomeAdminPageContent() {
           <TabsTrigger value="page-templates">Page Templates</TabsTrigger>
           <TabsTrigger value="models">Models</TabsTrigger>
           <TabsTrigger value="experiments">Model Evaluations</TabsTrigger>
+          <TabsTrigger value="issue-labels">Issue Labels</TabsTrigger>
           <TabsTrigger value="analytics">Analytics</TabsTrigger>
           <TabsTrigger value="authorization">RBAC Health</TabsTrigger>
           <TabsTrigger value="admins">Admins</TabsTrigger>
@@ -115,6 +119,10 @@ function TomeAdminPageContent() {
 
         <TabsContent value="experiments" className="mt-0 space-y-4">
           <ExperimentsTab />
+        </TabsContent>
+
+        <TabsContent value="issue-labels" className="mt-0 space-y-4">
+          <IssueLabelsTab />
         </TabsContent>
 
         <TabsContent value="analytics" className="mt-0 space-y-4">
