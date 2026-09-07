@@ -326,7 +326,11 @@ async function atlassianSpaces(
 
 async function webexRooms(token: string, q: string): Promise<SourceOption[]> {
   const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
-  const params = new URLSearchParams({ max: "100", sortBy: "lastactivity" });
+  const params = new URLSearchParams({
+    max: "1000",
+    sortBy: "lastactivity",
+    type: "group",
+  });
   const res = await fetch(`https://webexapis.com/v1/rooms?${params}`, { headers });
   if (!res.ok) return [];
   const body = (await res.json().catch(() => ({}))) as {

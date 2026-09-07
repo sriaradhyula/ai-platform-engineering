@@ -228,3 +228,70 @@ describe("GET /api/projects/source-options for GitHub", () => {
     ]);
   });
 });
+
+describe("GET /api/projects/source-options for Webex", () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockGetAuthFromBearerOrSession.mockResolvedValue({
+      session: { sub: "example-user" },
+    });
+    mockListConnections.mockResolvedValue([
+      {
+        id: "webex-connection",
+        provider: "webex",
+        status: "connected",
+      },
+    ]);
+    mockRefreshConnection.mockResolvedValue({
+      accessToken: "webex-token",
+      expiresIn: 3600,
+    });
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("requests and returns up to 1000 spaces ordered by recent activity", async () => {
+    const rooms = Array.from({ length: 1000 }, (_, index) => ({
+      id: `room-${index}`,
+      title: `Room ${index}`,
+    }));
+    global.fetch = jest.fn(async (input: string | URL | Request) => {
+      const url = new URL(
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url,
+      );
+      if (url.pathname === "/v1/rooms") {
+        expect(url.searchParams.get("max")).toBe("1000");
+        expect(url.searchParams.get("sortBy")).toBe("lastactivity");
+        expect(url.searchParams.get("type")).toBe("group");
+        return jsonResponse({ items: rooms });
+      }
+      if (url.pathname === "/v1/people/me") {
+        return jsonResponse({ displayName: "Example User" });
+      }
+      return jsonResponse({}, 404);
+    }) as typeof fetch;
+
+    const response = await GET(
+      new NextRequest(
+        "http://example.test/api/projects/source-options?provider=webex",
+      ),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.connectedTo).toBe("Example User");
+    expect(body.data.options).toHaveLength(1000);
+    expect(body.data.options[0]).toEqual({
+      value: "room-0",
+      label: "Room 0",
+    });
+  });
+});
