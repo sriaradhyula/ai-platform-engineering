@@ -12,6 +12,7 @@ import { authErrorToastTitle,type AuthError } from "@/lib/auth-error";
 import { getConfig } from "@/lib/config";
 import { fetchEphemeralFileContent } from "@/lib/ephemeral-files";
 import { ACCEPT_ATTRIBUTE,fileToInputFile,type InputFile,validateFiles } from "@/lib/file-attachments";
+import { takePendingFirstMessage } from "@/lib/pending-first-message";
 import { createSubagentResumeSeedEvents } from "@/lib/resume-subagent-context";
 import { createStreamAdapter,StreamError,type StreamCallbacks } from "@/lib/streaming";
 import { createStreamEvent,FILE_TOOL_NAMES,TODO_TOOL_NAME,type StreamEvent } from "@/lib/streaming/types";
@@ -1142,6 +1143,20 @@ export function ChatPanel({
       setConversationStreaming(convId, null);
     }
   }, [isThisConversationStreaming, activeConversationId, accessToken, agentId, agentProtocol, getActiveConversation, createConversation, clearStreamEvents, addMessage, appendToMessage, updateMessage, setConversationStreaming, buildStreamCallbacks, finalizeStreamLoop, session?.user, showAuthErrorToast, suppliedClientContext, toast]);
+
+  // The Home page hero composer creates a conversation and navigates here
+  // before a message can be sent (this panel only mounts once a conversation
+  // id is in the URL). Pick up its stashed first message and send it once
+  // through the normal pipeline rather than duplicating it there.
+  const pendingFirstMessageSentRef = useRef(false);
+  useEffect(() => {
+    if (pendingFirstMessageSentRef.current || readOnly) return;
+    const pending = takePendingFirstMessage(conversationId);
+    if (pending) {
+      pendingFirstMessageSentRef.current = true;
+      void submitMessage(pending.text, pending.files);
+    }
+  }, [conversationId, readOnly, submitMessage]);
 
   // Handle queued messages after streaming completes
   useEffect(() => {
