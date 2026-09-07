@@ -227,7 +227,9 @@ describe("Agentic App manifest microfrontend contract", () => {
   });
 
   it("accepts a versioned hosted UI and CAS target", () => {
-    const result = validateAgenticAppManifest(manifest());
+    const candidate = manifest();
+    (candidate.runtime as Record<string, unknown>).maxRequestBodyBytes = 67108864;
+    const result = validateAgenticAppManifest(candidate);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.errors.join(", "));
@@ -239,7 +241,27 @@ describe("Agentic App manifest microfrontend contract", () => {
       resourceType: "agentic_app",
       launchAction: "use",
     });
+    expect(result.manifest.runtime.maxRequestBodyBytes).toBe(67108864);
   });
+
+  it.each([0, 1.5, 67108865])(
+    "rejects invalid runtime.maxRequestBodyBytes value %s",
+    (maxRequestBodyBytes) => {
+      const candidate = manifest();
+      (candidate.runtime as Record<string, unknown>).maxRequestBodyBytes =
+        maxRequestBodyBytes;
+
+      const result = validateAgenticAppManifest(candidate);
+
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("expected manifest validation to fail");
+      expect(result.errors).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/runtime\.maxRequestBodyBytes must/),
+        ]),
+      );
+    },
+  );
 
   it("rejects unversioned UI contracts and unsupported authorization targets", () => {
     const candidate = manifest();

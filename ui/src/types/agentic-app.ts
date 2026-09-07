@@ -6,6 +6,9 @@ export type AgenticAppRuntimeKind =
   | "web-component"
   | "in-process";
 
+export const DEFAULT_AGENTIC_APP_MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024;
+export const MAX_AGENTIC_APP_REQUEST_BODY_BYTES = 64 * 1024 * 1024;
+
 export type AgenticAppPackageSource = "builtin" | "admin-import" | "helm" | "api";
 export type AgenticAppValidationStatus = "valid" | "warning" | "blocked";
 export type AgenticAppHealthStatus = "unknown" | "healthy" | "degraded" | "unreachable";
@@ -188,6 +191,8 @@ export interface AgenticAppManifest {
      *     `/api/agentic-apps/runtime/<id>`.
      */
     chrome?: "fullscreen" | "iframe";
+    /** Maximum buffered request body accepted by the hosted runtime proxy. */
+    maxRequestBodyBytes?: number;
   };
   /** Versioned contract between the CAIPE shell and a hosted microfrontend. */
   ui?: {

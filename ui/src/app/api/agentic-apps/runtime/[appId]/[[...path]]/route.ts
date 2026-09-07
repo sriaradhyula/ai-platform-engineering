@@ -20,6 +20,7 @@ import {
 } from "@/lib/agentic-apps/runtime";
 import { mintAgenticAppToken } from "@/lib/agentic-apps/tokens";
 import { ApiError, getAuthenticatedUser } from "@/lib/api-middleware";
+import { DEFAULT_AGENTIC_APP_MAX_REQUEST_BODY_BYTES } from "@/types/agentic-app";
 
 const BLOCKED_RESPONSE_HEADERS = new Set([
   "connection",
@@ -159,6 +160,22 @@ async function proxyAgenticAppRequest(
       },
     );
   }
+
+  const maxRequestBodyBytes = app.manifest.runtime.maxRequestBodyBytes
+    ?? DEFAULT_AGENTIC_APP_MAX_REQUEST_BODY_BYTES;
+  const declaredContentLength = parseContentLength(
+    request.headers.get("content-length"),
+  );
+  if (declaredContentLength !== null && declaredContentLength > maxRequestBodyBytes) {
+    return requestBodyTooLarge(maxRequestBodyBytes);
+  }
+  const body = shouldForwardBody(request.method)
+    ? await request.arrayBuffer()
+    : undefined;
+  if (body && body.byteLength > maxRequestBodyBytes) {
+    return requestBodyTooLarge(maxRequestBodyBytes);
+  }
+
   const appToken = await mintAgenticAppToken({
     appId,
     subject,
@@ -169,9 +186,6 @@ async function proxyAgenticAppRequest(
     correlationId,
   });
   const target = buildAgenticAppTargetUrl(app, path, request.url);
-  const body = shouldForwardBody(request.method)
-    ? await request.arrayBuffer()
-    : undefined;
 
   let upstream: Response;
   try {
@@ -277,6 +291,22 @@ function deriveRoles(session: Record<string, unknown>, role: string): string[] {
 
 function shouldForwardBody(method: string): boolean {
   return !["GET", "HEAD"].includes(method.toUpperCase());
+}
+
+function parseContentLength(value: string | null): number | null {
+  if (!value) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function requestBodyTooLarge(maxRequestBodyBytes: number): Response {
+  return Response.json(
+    {
+      error: "request_body_too_large",
+      maxRequestBodyBytes,
+    },
+    { status: 413 },
+  );
 }
 
 function isDocumentNavigation(request: Request): boolean {

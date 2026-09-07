@@ -25,6 +25,7 @@ describe("External Apps deployment config", () => {
           manifest: expect.objectContaining({
             id: "example-app",
             authorization: { resourceType: "agentic_app", launchAction: "use" },
+            runtime: expect.objectContaining({ maxRequestBodyBytes: 67108864 }),
             access: expect.objectContaining({ tokenScopes: ["example-app:read"] }),
           }),
           installation: expect.objectContaining({
@@ -34,6 +35,19 @@ describe("External Apps deployment config", () => {
         }),
       ]);
     });
+  });
+
+  it("rejects request-body limits outside the supported byte range", () => {
+    for (const invalid of [0, 1.5, 67108865]) {
+      withConfig(
+        validConfig().replace("maxRequestBodyBytes: 67108864", `maxRequestBodyBytes: ${invalid}`),
+        (path) => {
+          expect(() => loadConfiguredAgenticApps(path)).toThrow(
+            /maxRequestBodyBytes must/,
+          );
+        },
+      );
+    }
   });
 
   it("keeps the bundled Weather example compatible with the catalog parser", () => {
@@ -195,6 +209,7 @@ function validConfig(): string {
           origin: http://example-app.example.svc
           mountPath: /apps/example-app
           chrome: iframe
+          maxRequestBodyBytes: 67108864
         surfaces:
           showInHub: true
           navOrder: 50
