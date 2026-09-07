@@ -53,6 +53,7 @@ dependencies:
     alias: mcp-figma
     tags:
       - mcp-figma
+      - complete
     import-values:
       - child: agentExports.data
         parent: global.enabledSubAgents.figma

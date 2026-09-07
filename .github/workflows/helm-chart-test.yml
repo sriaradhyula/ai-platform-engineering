@@ -148,6 +148,19 @@ jobs:
         echo "$rendered" | grep -q 'name: ghcr-cisco-eti-pull' \
           || { echo "ERROR: Webex Bot pull secret name was not rendered" >&2; exit 1; }
 
+    - name: Test Figma MCP dependency rendering
+      run: |
+        cd charts/ai-platform-engineering
+        rendered=$(helm template test-figma-mcp . \
+          --set tags.mcp-figma=true \
+          --set 'mcp-figma.imagePullSecrets[0].name=ghcr-cisco-eti-pull' \
+          --set 'mcp-figma.mcp.image.repository=ghcr.io/cisco-eti/mcp-figma' \
+          --set 'mcp-figma.mcp.image.tag=1.0.0-outshift.20260905.9')
+        echo "$rendered" | grep -q 'name: test-figma-mcp-mcp-figma' \
+          || { echo "ERROR: Figma MCP resources were not rendered" >&2; exit 1; }
+        echo "$rendered" | grep -q 'ghcr.io/cisco-eti/mcp-figma:1.0.0-outshift.20260905.9' \
+          || { echo "ERROR: Figma MCP mirror image was not rendered" >&2; exit 1; }
+
     - name: Test ai-platform-engineering installation (dry-run) - AgentGateway static routing (CRD-free, default)
       run: |
         cd charts/ai-platform-engineering
