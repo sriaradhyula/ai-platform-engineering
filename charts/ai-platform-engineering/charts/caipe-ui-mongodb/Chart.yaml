@@ -2,6 +2,6 @@ apiVersion: v2
 name: caipe-ui-mongodb
 description: MongoDB database for CAIPE UI persistence
 type: application
-version: 1.0.0-outshift.20260907.2
-appVersion: "1.0.0-outshift.20260907.2"
+version: 1.0.0-outshift.20260907.3
+appVersion: "1.0.0-outshift.20260907.3"
 dependencies: []
