@@ -5,6 +5,7 @@ import type {
   AgenticAppPdpPolicyAction,
   AgenticAppRuntimeKind,
 } from "@/types/agentic-app";
+import { MAX_AGENTIC_APP_REQUEST_BODY_BYTES } from "@/types/agentic-app";
 
 const API_VERSION = "1.0";
 
@@ -148,6 +149,23 @@ export function validateAgenticAppManifest(input: unknown): ManifestValidationRe
     ) {
       errors.push('runtime.chrome must be "fullscreen" or "iframe" when present');
     }
+    if (
+      runtimeRaw.maxRequestBodyBytes !== undefined &&
+      (typeof runtimeRaw.maxRequestBodyBytes !== "number" ||
+        !Number.isSafeInteger(runtimeRaw.maxRequestBodyBytes) ||
+        runtimeRaw.maxRequestBodyBytes < 1)
+    ) {
+      errors.push(
+        "runtime.maxRequestBodyBytes must be a positive integer number of bytes when present",
+      );
+    } else if (
+      typeof runtimeRaw.maxRequestBodyBytes === "number" &&
+      runtimeRaw.maxRequestBodyBytes > MAX_AGENTIC_APP_REQUEST_BODY_BYTES
+    ) {
+      errors.push(
+        `runtime.maxRequestBodyBytes must not exceed ${MAX_AGENTIC_APP_REQUEST_BODY_BYTES} bytes`,
+      );
+    }
 
     if (
       typeof kind === "string" &&
@@ -170,6 +188,14 @@ export function validateAgenticAppManifest(input: unknown): ManifestValidationRe
       }
       if (runtimeRaw.chrome === "fullscreen" || runtimeRaw.chrome === "iframe") {
         runtime.chrome = runtimeRaw.chrome;
+      }
+      if (
+        typeof runtimeRaw.maxRequestBodyBytes === "number" &&
+        Number.isSafeInteger(runtimeRaw.maxRequestBodyBytes) &&
+        runtimeRaw.maxRequestBodyBytes >= 1 &&
+        runtimeRaw.maxRequestBodyBytes <= MAX_AGENTIC_APP_REQUEST_BODY_BYTES
+      ) {
+        runtime.maxRequestBodyBytes = runtimeRaw.maxRequestBodyBytes;
       }
     }
   }
