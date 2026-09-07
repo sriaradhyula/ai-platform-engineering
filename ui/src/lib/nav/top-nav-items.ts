@@ -30,10 +30,12 @@ export const BUILT_IN_TOP_NAV_ITEMS: TopNavItemMeta[] = [
   { key: "workflows", label: "Workflows" },
   { key: "knowledge", label: "Knowledge Bases" },
   { key: "dynamic-agents", label: "Agents" },
+  { key: "autonomous", label: "Autonomous" },
   { key: "apps", label: "Apps" },
   { key: "schedules", label: "Schedules" },
   { key: "credentials", label: "Connections" },
   { key: "admin", label: "Admin" },
+  { key: "settings", label: "Settings" },
 ];
 
 export const DEFAULT_TOP_NAV_ORDER: string[] = BUILT_IN_TOP_NAV_ITEMS.map(
@@ -75,9 +77,12 @@ export function normalizeTopNavConfig(input: unknown): TopNavConfig {
 /**
  * Apply an admin nav config to a list of items keyed by `key`:
  *  - drop any item whose key is in `hidden`
- *  - sort by `order` (listed keys first, in that order; unlisted keys keep
- *    their original relative order at the end)
- * Array.prototype.sort is stable (ES2019+), so unlisted items stay put.
+ *  - preserve the configured order for listed keys
+ *  - insert newly introduced/unlisted keys at their default position before
+ *    the next configured key, instead of moving them below utility items
+ *
+ * This lets an older persisted configuration pick up new destinations without
+ * rewriting the stored document or requiring an admin to reset navigation.
  */
 export function applyTopNavConfig<T extends { key: string }>(
   items: T[],
@@ -87,9 +92,35 @@ export function applyTopNavConfig<T extends { key: string }>(
   const visible = items.filter((item) => !hidden.has(item.key));
   const order = config?.order ?? [];
   if (order.length === 0) return visible;
-  const rank = new Map(order.map((key, idx) => [key, idx] as const));
-  const END = Number.MAX_SAFE_INTEGER;
-  return [...visible].sort(
-    (a, b) => (rank.get(a.key) ?? END) - (rank.get(b.key) ?? END),
-  );
+
+  const visibleByKey = new Map(visible.map((item) => [item.key, item] as const));
+  const configuredKeys = new Set<string>();
+  const result: T[] = [];
+
+  for (const key of order) {
+    const item = visibleByKey.get(key);
+    if (item && !configuredKeys.has(key)) {
+      configuredKeys.add(key);
+      result.push(item);
+    }
+  }
+
+  visible.forEach((item, index) => {
+    if (configuredKeys.has(item.key)) return;
+
+    const nextConfiguredItem = visible
+      .slice(index + 1)
+      .find((candidate) => configuredKeys.has(candidate.key));
+    if (!nextConfiguredItem) {
+      result.push(item);
+      return;
+    }
+
+    const insertionIndex = result.findIndex(
+      (candidate) => candidate.key === nextConfiguredItem.key,
+    );
+    result.splice(insertionIndex, 0, item);
+  });
+
+  return result;
 }
