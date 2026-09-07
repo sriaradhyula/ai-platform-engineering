@@ -382,4 +382,8 @@ export interface PublicAgenticApp {
   sharedWithTeams: string[];
   canManage: boolean;
   sharingEnabled: boolean;
+  assistantEnabled: boolean;
+  assistantAgentId?: string;
+  assistantLabel?: string;
+  assistantAgentName?: string;
 }

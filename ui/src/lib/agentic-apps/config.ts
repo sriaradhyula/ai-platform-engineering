@@ -245,9 +245,38 @@ function parseManifest(value: unknown, path: string): AgenticAppManifest {
   const catalogRaw = raw.catalog === undefined
     ? undefined
     : asRecord(raw.catalog, `${path}.catalog`);
+  const assistantRaw = raw.assistant === undefined
+    ? undefined
+    : asRecord(raw.assistant, `${path}.assistant`);
   const healthRaw = raw.health === undefined
     ? undefined
     : asRecord(raw.health, `${path}.health`);
+
+  if (assistantRaw) {
+    assertKnownKeys(
+      assistantRaw,
+      [
+        "enabled",
+        "agentId",
+        "schemaVersions",
+        "maxContextBytes",
+        "capability",
+        "suggestions",
+        "label",
+        "agentName",
+        "name",
+        "contextEndpoint",
+      ],
+      `${path}.assistant`,
+    );
+    if (
+      assistantRaw.agentName !== undefined
+      && assistantRaw.name !== undefined
+      && assistantRaw.agentName !== assistantRaw.name
+    ) {
+      throw new Error(`${path}.assistant.agentName and ${path}.assistant.name must match`);
+    }
+  }
 
   return {
     id,
@@ -316,6 +345,81 @@ function parseManifest(value: unknown, path: string): AgenticAppManifest {
           authorization: {
             resourceType: "agentic_app" as const,
             launchAction: "use" as const,
+          },
+        }
+      : {}),
+    ...(assistantRaw
+      ? {
+          assistant: {
+            ...(assistantRaw.enabled !== undefined
+              ? {
+                  enabled: optionalBoolean(
+                    assistantRaw.enabled,
+                    true,
+                    `${path}.assistant.enabled`,
+                  ),
+                }
+              : {}),
+            ...(assistantRaw.agentId !== undefined
+              ? {
+                  agentId: requiredString(
+                    assistantRaw.agentId,
+                    `${path}.assistant.agentId`,
+                  ),
+                }
+              : {}),
+            ...(assistantRaw.schemaVersions !== undefined
+              ? {
+                  schemaVersions: requiredStringArray(
+                    assistantRaw.schemaVersions,
+                    `${path}.assistant.schemaVersions`,
+                    true,
+                  ),
+                }
+              : {}),
+            ...(assistantRaw.maxContextBytes !== undefined
+              ? {
+                  maxContextBytes: requiredAssistantContextLimit(
+                    assistantRaw.maxContextBytes,
+                    `${path}.assistant.maxContextBytes`,
+                  ),
+                }
+              : {}),
+            ...(assistantRaw.capability !== undefined
+              ? {
+                  capability: requiredString(
+                    assistantRaw.capability,
+                    `${path}.assistant.capability`,
+                  ),
+                }
+              : {}),
+            ...(assistantRaw.suggestions !== undefined
+              ? {
+                  suggestions: optionalBoolean(
+                    assistantRaw.suggestions,
+                    true,
+                    `${path}.assistant.suggestions`,
+                  ),
+                }
+              : {}),
+            ...(assistantRaw.label !== undefined
+              ? {
+                  label: requiredBoundedString(
+                    assistantRaw.label,
+                    `${path}.assistant.label`,
+                    32,
+                  ),
+                }
+              : {}),
+            ...(assistantRaw.agentName !== undefined || assistantRaw.name !== undefined
+              ? {
+                  agentName: requiredBoundedString(
+                    assistantRaw.agentName ?? assistantRaw.name,
+                    `${path}.assistant.agentName`,
+                    64,
+                  ),
+                }
+              : {}),
           },
         }
       : {}),
@@ -482,6 +586,14 @@ function requiredString(value: unknown, path: string): string {
   return result;
 }
 
+function requiredBoundedString(value: unknown, path: string, maxLength: number): string {
+  const result = requiredString(value, path);
+  if (result.length > maxLength) {
+    throw new Error(`${path} must be at most ${maxLength} characters`);
+  }
+  return result;
+}
+
 function requiredAppId(value: unknown, path: string): string {
   const result = requiredString(value, path);
   if (!APP_ID_PATTERN.test(result)) {
@@ -516,6 +628,14 @@ function requiredRequestBodyLimit(value: unknown, path: string): number {
     throw new Error(
       `${path} must not exceed ${MAX_AGENTIC_APP_REQUEST_BODY_BYTES} bytes`,
     );
+  }
+  return result;
+}
+
+function requiredAssistantContextLimit(value: unknown, path: string): number {
+  const result = requiredNumber(value, path);
+  if (!Number.isSafeInteger(result) || result < 1 || result > 65536) {
+    throw new Error(`${path} must be an integer between 1 and 65536`);
   }
   return result;
 }

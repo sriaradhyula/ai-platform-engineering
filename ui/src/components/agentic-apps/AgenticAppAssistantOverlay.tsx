@@ -2,12 +2,23 @@
 
 // assisted-by Codex Codex-sonnet-4-6
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bot, MessageCircle, Sparkles, Type, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Bot,
+  LoaderCircle,
+  MessageCircle,
+  Plus,
+  Sparkles,
+  Trash2,
+  Type,
+  X,
+} from "lucide-react";
 
 import { ChatPanel } from "@/components/chat/DynamicAgentChatPanel";
 import { buildAssistantClientContext } from "@/lib/agentic-apps/assistant-context";
 import { cn } from "@/lib/utils";
+import { useChatStore } from "@/store/chat-store";
+import type { Conversation } from "@/types/a2a";
 import type { AgenticAppAssistantContextRecord } from "@/types/agentic-app";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 
@@ -16,6 +27,7 @@ const MIN_PANEL_SIZE = { width: 480, height: 560 };
 const MAX_PANEL_SIZE = { width: 1180, height: 940 };
 const GLASS_MODE_STORAGE_KEY = "agentic-app-assistant-glass";
 const FONT_SCALE_STORAGE_KEY = "agentic-app-assistant-font-scale";
+const AGENTIC_APP_CONVERSATION_KIND = "agentic-app";
 
 type AssistantFontScale = "compact" | "default" | "large";
 
@@ -64,6 +76,37 @@ export function AgenticAppAssistantOverlay({
   const [panelSize, setPanelSize] = useState(DEFAULT_PANEL_SIZE);
   const [glassMode, setGlassMode] = useState(readStoredGlassMode);
   const [fontScale, setFontScale] = useState<AssistantFontScale>(readStoredFontScale);
+  const [assistantConversation, setAssistantConversation] = useState<{
+    agentId: string;
+    id: string;
+  } | null>(null);
+  const [conversationError, setConversationError] = useState<{
+    agentId: string;
+    message: string;
+  } | null>(null);
+  const [conversationActionPending, setConversationActionPending] = useState(false);
+  const previousActiveConversationRef = useRef<string | null | undefined>(undefined);
+  const conversationRequestRef = useRef<{
+    key: string;
+    promise: Promise<string>;
+  } | null>(null);
+  const createConversation = useChatStore((state) => state.createConversation);
+  const deleteConversation = useChatStore((state) => state.deleteConversation);
+  const loadConversationsFromServer = useChatStore(
+    (state) => state.loadConversationsFromServer,
+  );
+  const loadMessagesFromServer = useChatStore((state) => state.loadMessagesFromServer);
+  const setActiveConversation = useChatStore((state) => state.setActiveConversation);
+  const conversationKey = `${appId}:${assistantAgentId}`;
+  const conversationTitle = `${appName} Assistant`.slice(0, 120);
+  const conversationMetadata = useMemo(
+    () => ({
+      conversation_surface: AGENTIC_APP_CONVERSATION_KIND,
+      agentic_app_id: appId,
+      agentic_app_agent_id: assistantAgentId,
+    }),
+    [appId, assistantAgentId],
+  );
   const clientContext = useMemo(() => buildAssistantClientContext(activeContext), [activeContext]);
   const suggestedPrompts = activeContext?.suggestedPrompts?.length
     ? activeContext.suggestedPrompts
@@ -76,6 +119,157 @@ export function AgenticAppAssistantOverlay({
   useEffect(() => {
     writeStoredFontScale(fontScale);
   }, [fontScale]);
+
+  useEffect(() => {
+    if (!open) return;
+    previousActiveConversationRef.current = useChatStore.getState().activeConversationId;
+    return () => {
+      setActiveConversation(previousActiveConversationRef.current ?? null);
+      previousActiveConversationRef.current = undefined;
+    };
+  }, [open, setActiveConversation]);
+
+  const createAppConversation = useCallback(
+    () =>
+      createConversation(assistantAgentId, {
+        title: conversationTitle,
+        metadata: conversationMetadata,
+      }),
+    [assistantAgentId, conversationMetadata, conversationTitle, createConversation],
+  );
+
+  const findOrCreateAppConversation = useCallback(async (): Promise<string> => {
+    await loadConversationsFromServer();
+    const existing = findLatestAppConversation(
+      useChatStore.getState().conversations,
+      appId,
+      assistantAgentId,
+    );
+    if (!existing) return createAppConversation();
+
+    setActiveConversation(existing.id);
+    await loadMessagesFromServer(existing.id);
+    return existing.id;
+  }, [
+    appId,
+    assistantAgentId,
+    createAppConversation,
+    loadConversationsFromServer,
+    loadMessagesFromServer,
+    setActiveConversation,
+  ]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    const previousActiveConversation = previousActiveConversationRef.current ?? null;
+
+    if (assistantConversation?.agentId === assistantAgentId) {
+      setActiveConversation(assistantConversation.id);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    let request = conversationRequestRef.current;
+    if (!request || request.key !== conversationKey) {
+      request = {
+        key: conversationKey,
+        promise: findOrCreateAppConversation(),
+      };
+      conversationRequestRef.current = request;
+    }
+
+    request.promise
+      .then((id) => {
+        if (cancelled) {
+          setActiveConversation(previousActiveConversation);
+          return;
+        }
+        setAssistantConversation({ agentId: assistantAgentId, id });
+        setActiveConversation(id);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setConversationError({
+            agentId: assistantAgentId,
+            message: error instanceof Error ? error.message : "Could not start assistant chat",
+          });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    assistantAgentId,
+    assistantConversation,
+    conversationKey,
+    findOrCreateAppConversation,
+    open,
+    setActiveConversation,
+  ]);
+
+  const handleNewChat = useCallback(async (): Promise<void> => {
+    if (conversationActionPending) return;
+    setConversationActionPending(true);
+    setConversationError(null);
+    try {
+      const id = await createAppConversation();
+      conversationRequestRef.current = { key: conversationKey, promise: Promise.resolve(id) };
+      setAssistantConversation({ agentId: assistantAgentId, id });
+      setActiveConversation(id);
+    } catch (error: unknown) {
+      setConversationError({
+        agentId: assistantAgentId,
+        message: error instanceof Error ? error.message : "Could not start a new chat",
+      });
+    } finally {
+      setConversationActionPending(false);
+    }
+  }, [
+    assistantAgentId,
+    conversationActionPending,
+    conversationKey,
+    createAppConversation,
+    setActiveConversation,
+  ]);
+
+  const handleClearChat = useCallback(async (): Promise<void> => {
+    if (!assistantConversation || conversationActionPending) return;
+    if (
+      !window.confirm(
+        "Clear this chat? The current conversation will move to Trash and a new chat will start.",
+      )
+    ) {
+      return;
+    }
+
+    setConversationActionPending(true);
+    setConversationError(null);
+    try {
+      await deleteConversation(assistantConversation.id);
+      const id = await createAppConversation();
+      conversationRequestRef.current = { key: conversationKey, promise: Promise.resolve(id) };
+      setAssistantConversation({ agentId: assistantAgentId, id });
+      setActiveConversation(id);
+    } catch (error: unknown) {
+      setConversationError({
+        agentId: assistantAgentId,
+        message: error instanceof Error ? error.message : "Could not clear this chat",
+      });
+    } finally {
+      setConversationActionPending(false);
+    }
+  }, [
+    assistantAgentId,
+    assistantConversation,
+    conversationActionPending,
+    conversationKey,
+    createAppConversation,
+    deleteConversation,
+    setActiveConversation,
+  ]);
 
   const handleResizeStart = useCallback(
     (event: React.PointerEvent<HTMLButtonElement>) => {
@@ -155,6 +349,30 @@ export function AgenticAppAssistantOverlay({
             <div className="flex items-center gap-2">
               <button
                 type="button"
+                aria-label="Start new assistant chat"
+                title="New chat"
+                disabled={conversationActionPending}
+                onClick={() => void handleNewChat()}
+                className="rounded-full p-2 text-slate-400 transition hover:bg-white/10 hover:text-white disabled:cursor-wait disabled:opacity-50"
+              >
+                {conversationActionPending ? (
+                  <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden />
+                ) : (
+                  <Plus className="h-4 w-4" aria-hidden />
+                )}
+              </button>
+              <button
+                type="button"
+                aria-label="Clear assistant chat"
+                title="Clear chat"
+                disabled={!assistantConversation || conversationActionPending}
+                onClick={() => void handleClearChat()}
+                className="rounded-full p-2 text-slate-400 transition hover:bg-red-400/10 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Trash2 className="h-4 w-4" aria-hidden />
+              </button>
+              <button
+                type="button"
                 aria-label={`Assistant font size ${fontScale}`}
                 onClick={() => setFontScale((value) => nextFontScale(value))}
                 className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-slate-950/40 px-2.5 py-1.5 text-[11px] font-medium text-slate-300 transition hover:text-white"
@@ -218,18 +436,30 @@ export function AgenticAppAssistantOverlay({
           </div>
 
           <div className="min-h-0 flex-1">
-            <ChatPanel
-              key={assistantAgentId}
-              agentId={assistantAgentId}
-              agent={chatPanelAgent}
-              clientContext={clientContext}
-              suggestedPrompts={suggestedPrompts}
-              suggestedPromptsInitiallyHidden={false}
-              emptyStateTitle={`Ask about ${appName}`}
-              emptyStateSubtitle="The accepted app context is attached as structured metadata."
-              surface={glassMode ? "glass" : "default"}
-              fontScale={fontScale}
-            />
+            {assistantConversation?.agentId === assistantAgentId ? (
+              <ChatPanel
+                key={assistantConversation.id}
+                conversationId={assistantConversation.id}
+                agentId={assistantAgentId}
+                agent={chatPanelAgent}
+                clientContext={clientContext}
+                suggestedPrompts={suggestedPrompts}
+                suggestedPromptsInitiallyHidden={false}
+                emptyStateTitle={`Ask about ${appName}`}
+                emptyStateSubtitle="The accepted app context is attached as structured metadata."
+                surface={glassMode ? "glass" : "default"}
+                fontScale={fontScale}
+              />
+            ) : conversationError?.agentId === assistantAgentId ? (
+              <div className="flex h-full items-center justify-center p-6 text-center text-sm text-red-200">
+                {conversationError.message}
+              </div>
+            ) : (
+              <div className="flex h-full items-center justify-center gap-2 text-sm text-slate-300">
+                <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden />
+                Starting {bubbleLabel}…
+              </div>
+            )}
           </div>
         </section>
       ) : null}
@@ -250,6 +480,24 @@ export function AgenticAppAssistantOverlay({
 
 function clientPoint(event: PointerEvent | React.PointerEvent): { x: number; y: number } {
   return { x: event.clientX, y: event.clientY };
+}
+
+function findLatestAppConversation(
+  conversations: Conversation[],
+  appId: string,
+  agentId: string,
+): Conversation | null {
+  return conversations.reduce<Conversation | null>((latest, conversation) => {
+    const metadata = conversation.metadata;
+    if (
+      metadata?.conversation_surface !== AGENTIC_APP_CONVERSATION_KIND
+      || metadata.agentic_app_id !== appId
+      || metadata.agentic_app_agent_id !== agentId
+    ) {
+      return latest;
+    }
+    return !latest || conversation.updatedAt > latest.updatedAt ? conversation : latest;
+  }, null);
 }
 
 function clampPanelSize(size: { width: number; height: number }): { width: number; height: number } {

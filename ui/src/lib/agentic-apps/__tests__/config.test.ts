@@ -85,7 +85,7 @@ describe("External Apps deployment config", () => {
       )
       .replace(
         "        health:\n          endpoint: /health",
-        "        assistant:\n          enabled: false\n        health:\n          endpoint: /health\n          timeoutMs: 2000\n          blockLaunchWhen: [degraded, unreachable]",
+        "        assistant:\n          enabled: false\n          agentId: agent-example\n          name: Example Assistant\n          label: Ask Example\n          contextEndpoint: /api/context\n        health:\n          endpoint: /health\n          timeoutMs: 2000\n          blockLaunchWhen: [degraded, unreachable]",
       )
       .replace(
         "      runtime_origin_override: http://example-app.example.svc",
@@ -98,6 +98,12 @@ describe("External Apps deployment config", () => {
           manifest: expect.objectContaining({
             id: "example-app",
             surfaces: expect.objectContaining({ showInHub: true, navOrder: 50 }),
+            assistant: {
+              enabled: false,
+              agentId: "agent-example",
+              agentName: "Example Assistant",
+              label: "Ask Example",
+            },
             health: { endpoint: "/health", timeoutMs: 2000 },
           }),
           installation: expect.objectContaining({ enabled: true, visible: true }),

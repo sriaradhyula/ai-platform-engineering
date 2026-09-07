@@ -15,6 +15,16 @@ export function buildPublicAgenticApp(
     blockedReasons: canLaunch ? [] : ["unauthorized"],
     categories: app.manifest.catalog?.categories ?? [],
     capabilities: app.manifest.catalog?.capabilities ?? [],
+    assistantEnabled: app.manifest.assistant?.enabled !== false,
+    ...(app.manifest.assistant?.agentId
+      ? { assistantAgentId: app.manifest.assistant.agentId }
+      : {}),
+    ...(app.manifest.assistant?.label
+      ? { assistantLabel: app.manifest.assistant.label }
+      : {}),
+    ...(app.manifest.assistant?.agentName
+      ? { assistantAgentName: app.manifest.assistant.agentName }
+      : {}),
     runtimeKind: app.manifest.runtime.kind,
     requestedScopes: app.manifest.access.tokenScopes,
     createdBy: "Deployment config",
