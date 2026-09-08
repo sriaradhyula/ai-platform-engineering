@@ -26,6 +26,7 @@ jest.mock("@octokit/rest", () => ({
 
 import {
   displayStatusFromIssue,
+  displayStatusFromProjectStatus,
   listIssuesAcrossRepos,
   mapWithConcurrency,
   normalizeGitHubRepo,
@@ -64,6 +65,9 @@ describe("github-issue-link", () => {
     expect(displayStatusFromIssue("closed", ["status:in-progress"])).toBe(
       "resolved",
     );
+    expect(displayStatusFromProjectStatus("In Progress")).toBe("in_progress");
+    expect(displayStatusFromProjectStatus("done")).toBe("resolved");
+    expect(displayStatusFromProjectStatus("Review")).toBeNull();
   });
 
   it("adds one label without replacing existing GitHub labels", async () => {

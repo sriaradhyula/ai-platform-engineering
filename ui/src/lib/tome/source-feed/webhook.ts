@@ -10,6 +10,7 @@
 import {
   IN_PROGRESS_LABEL_ALIASES,
 } from "@/lib/github-issue-snapshot";
+import type { LinkedIssueDisplayStatus } from "@/lib/github-issue-snapshot";
 import { projectSlugsForRepository } from "@/lib/github-webhooks/tome-issue-cache";
 import { isMyceliumConfigured, postEvent } from "@/lib/tome/mycelium";
 
@@ -87,6 +88,80 @@ export async function emitLabelChangeToFeed(
           actor: event.actor,
           ts: event.ts,
           labels: event.labels,
+        },
+        provenance: provenanceFor(event),
+      }),
+    ),
+  );
+}
+
+export interface WebhookProjectStatusChange {
+  repoId: number;
+  repoFullName: string;
+  number: number;
+  title: string;
+  url: string;
+  labels: string[];
+  status: LinkedIssueDisplayStatus;
+  projectStatusName: string | null;
+  actor: string | null;
+  ts: string;
+}
+
+function projectStatusTitle(change: WebhookProjectStatusChange): string {
+  const status =
+    change.status === "in_progress"
+      ? "In Progress"
+      : change.status === "resolved"
+        ? "Resolved"
+        : "Open";
+  const project = change.projectStatusName
+    ? ` (${change.projectStatusName})`
+    : "";
+  return `Issue moved to ${status}${project}: "${change.title}" (#${change.number})`;
+}
+
+/** Post a Feed entry for an organization Project V2 status change. */
+export async function emitProjectStatusChangeToFeed(
+  change: WebhookProjectStatusChange,
+): Promise<void> {
+  if (!isMyceliumConfigured()) return;
+  const slugs = await projectSlugsForRepository(
+    change.repoId,
+    change.repoFullName,
+  );
+  if (slugs.length === 0) return;
+
+  const event: SourceEvent = {
+    source: "github",
+    artifact: "issue",
+    event: "issue_project_status_changed",
+    title: projectStatusTitle(change),
+    url: change.url,
+    ref: `${change.repoFullName}#${change.number}`,
+    actor: change.actor,
+    ts: change.ts,
+    repo: change.repoFullName,
+    labels: change.labels,
+  };
+
+  await Promise.all(
+    slugs.map((slug) =>
+      postEvent(slug, {
+        sender_handle: "github",
+        content: event.title,
+        kind: "source_event",
+        payload: {
+          source: event.source,
+          artifact: event.artifact,
+          event: event.event,
+          repo: event.repo,
+          ref: event.ref,
+          url: event.url,
+          actor: event.actor,
+          ts: event.ts,
+          labels: event.labels,
+          project_status: change.projectStatusName,
         },
         provenance: provenanceFor(event),
       }),

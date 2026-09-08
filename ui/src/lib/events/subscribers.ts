@@ -5,8 +5,14 @@ import {
   isTomeIssueCacheEvent,
   recordTomeIssueCacheEvent,
 } from "@/lib/github-webhooks/tome-issue-cache";
-import { emitLabelChangeToFeed } from "@/lib/tome/source-feed/webhook";
+import { readGitHubProjectV2Issue } from "@/lib/github-project-v2";
+import { upsertCachedTomeIssue } from "@/lib/tome/github-issue-cache";
+import {
+  emitLabelChangeToFeed,
+  emitProjectStatusChangeToFeed,
+} from "@/lib/tome/source-feed/webhook";
 import type { CaipeEvent, CaipeEventSubscriber } from "@/lib/events/types";
+import type { LinkedIssueStatus } from "@/lib/github-issue-snapshot";
 
 function githubEventType(event: CaipeEvent): string | null {
   return typeof event.data.github_event === "string"
@@ -118,7 +124,124 @@ const tomeGitHubIssueCacheSubscriber: CaipeEventSubscriber = {
   },
 };
 
+interface ProjectV2ItemWebhookSnapshot {
+  node_id: string;
+  content_node_id: string;
+  content_type?: string;
+}
+
+function isProjectV2ItemSnapshot(
+  value: unknown,
+): value is ProjectV2ItemWebhookSnapshot {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<ProjectV2ItemWebhookSnapshot>;
+  return (
+    typeof candidate.node_id === "string" &&
+    typeof candidate.content_node_id === "string"
+  );
+}
+
+function projectV2FieldNodeId(value: unknown): string | null {
+  if (typeof value !== "object" || value === null) return null;
+  const fieldValue = (value as { field_value?: unknown }).field_value;
+  if (typeof fieldValue !== "object" || fieldValue === null) return null;
+  const fieldNodeId = (fieldValue as { field_node_id?: unknown }).field_node_id;
+  return typeof fieldNodeId === "string" ? fieldNodeId : null;
+}
+
+const tomeGitHubProjectV2Subscriber: CaipeEventSubscriber = {
+  id: "tome.github-project-v2-status.v1",
+  matches(event) {
+    return event.source === "github" && githubEventType(event) === "projects_v2_item";
+  },
+  async handle(event) {
+    const item = event.data.projects_v2_item;
+    if (!isProjectV2ItemSnapshot(item)) return;
+    if (item.content_type && item.content_type !== "Issue") return;
+
+    const token =
+      process.env.TOME_GITHUB_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim();
+    if (!token) {
+      throw new Error(
+        "TOME_GITHUB_TOKEN or GITHUB_TOKEN is required for Project V2 webhook reconciliation",
+      );
+    }
+
+    const lookup = await readGitHubProjectV2Issue(token, {
+      itemNodeId: item.node_id,
+      contentNodeId: item.content_node_id,
+      fieldNodeId: projectV2FieldNodeId(event.data.projects_v2_changes),
+    });
+    if (!lookup) return;
+    if (
+      lookup.repositoryId == null ||
+      !(await isRepositoryAttachedToTome(
+        lookup.repositoryId,
+        lookup.repositoryFullName,
+      ))
+    ) {
+      return;
+    }
+
+    const action = githubAction(event);
+    const statusChanged = lookup.statusFieldChanged && action === "edited";
+    const projectDisplayStatus =
+      action === "deleted"
+        ? null
+        : statusChanged
+          ? lookup.projectStatus
+          : undefined;
+    await recordProjectV2IssueCacheEvent({
+      repoId: lookup.repositoryId,
+      fullName: lookup.repositoryFullName,
+      deliveryId:
+        typeof event.data.delivery_id === "string"
+          ? event.data.delivery_id
+          : null,
+      issue: lookup.issue,
+      projectDisplayStatus,
+    });
+
+    if (statusChanged && lookup.projectStatus) {
+      await emitProjectStatusChangeToFeed({
+        repoId: lookup.repositoryId,
+        repoFullName: lookup.repositoryFullName,
+        number: lookup.issue.number,
+        title: lookup.issue.title,
+        url: lookup.issue.url,
+        labels: lookup.issue.labels,
+        status: lookup.projectStatus,
+        projectStatusName: lookup.projectStatusName,
+        actor:
+          typeof event.data.sender_login === "string"
+            ? event.data.sender_login
+            : null,
+        ts: new Date(event.time).toISOString(),
+      });
+    }
+  },
+};
+
+async function recordProjectV2IssueCacheEvent(input: {
+  repoId: number;
+  fullName: string;
+  deliveryId: string | null;
+  issue: LinkedIssueStatus;
+  projectDisplayStatus: "open" | "in_progress" | "resolved" | null | undefined;
+}): Promise<void> {
+  await upsertCachedTomeIssue(input.issue, {
+    repoId: input.repoId,
+    eventType: "projects_v2_item",
+    deliveryId: input.deliveryId,
+    webhook: true,
+    ...(input.projectDisplayStatus !== undefined
+      ? { projectDisplayStatus: input.projectDisplayStatus }
+      : {}),
+  });
+}
+
 export const caipeEventSubscribers: readonly CaipeEventSubscriber[] = [
+  tomeGitHubProjectV2Subscriber,
   tomeGitHubIssueCacheSubscriber,
   tomeFeedLabelChangeSubscriber,
 ];

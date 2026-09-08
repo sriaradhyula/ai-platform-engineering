@@ -34,6 +34,20 @@ const PROJECT_STATUS_ALIASES: Record<LinkedIssueDisplayStatus, string[]> = {
   resolved: ["done", "completed", "complete", "resolved", "closed"],
 };
 
+export function displayStatusFromProjectStatus(
+  value: string | null | undefined,
+): LinkedIssueDisplayStatus | null {
+  if (!value) return null;
+  const normalized = normalizedProjectStatus(value);
+  for (const [status, aliases] of Object.entries(PROJECT_STATUS_ALIASES) as [
+    LinkedIssueDisplayStatus,
+    string[],
+  ][]) {
+    if (aliases.includes(normalized)) return status;
+  }
+  return null;
+}
+
 interface ProjectStatusOption {
   id: string;
   name: string;

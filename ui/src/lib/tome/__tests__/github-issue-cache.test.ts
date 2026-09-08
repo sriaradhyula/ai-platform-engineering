@@ -238,6 +238,25 @@ describe("TOME MongoDB GitHub issue cache", () => {
     );
   });
 
+  it("stores a Project V2 status override separately from issue labels", async () => {
+    await upsertCachedTomeIssue(linkedIssue, {
+      repoId: 123,
+      eventType: "projects_v2_item",
+      deliveryId: "delivery-project-1",
+      webhook: true,
+      projectDisplayStatus: "in_progress",
+    });
+
+    expect(mockIssueReplaceOne).toHaveBeenCalledWith(
+      { _id: "example/service#42" },
+      expect.objectContaining({
+        display_status: "open",
+        project_display_status: "in_progress",
+      }),
+      { upsert: true },
+    );
+  });
+
   it("does not signal a cache change for an older duplicate snapshot", async () => {
     mockIssueFindOne.mockResolvedValue({
       ...cachedRow,

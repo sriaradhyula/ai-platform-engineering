@@ -86,6 +86,36 @@ function pullRequestRequest(action: string): Request {
   });
 }
 
+function projectV2Request(): Request {
+  return new Request("http://example.test/api/webhooks/github", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-GitHub-Event": "projects_v2_item",
+      "X-GitHub-Delivery": "delivery-project-1",
+      "X-Hub-Signature-256": "sha256=signature",
+    },
+    body: JSON.stringify({
+      action: "edited",
+      projects_v2_item: {
+        node_id: "PVTI_item",
+        project_node_id: "PVT_project",
+        content_node_id: "I_issue",
+        content_type: "Issue",
+        updated_at: "2026-08-27T03:00:00Z",
+      },
+      changes: {
+        field_value: {
+          field_node_id: "PVTSSF_status",
+          field_type: "single_select",
+        },
+      },
+      organization: { login: "example" },
+      sender: { login: "test-user" },
+    }),
+  });
+}
+
 describe("shared GitHub webhook ingress", () => {
   const originalEnabled = process.env.TOME_GITHUB_WEBHOOK_ENABLED;
   const originalSecret = process.env.GITHUB_WEBHOOK_SECRET;
@@ -203,6 +233,33 @@ describe("shared GitHub webhook ingress", () => {
             labels: ["status:in-progress"],
           }),
           label_name: "status:in-progress",
+        }),
+      }),
+    );
+  });
+
+  it("accepts an organization Project V2 item delivery without a repository payload", async () => {
+    const response = await POST(projectV2Request());
+
+    expect(response.status).toBe(202);
+    expect(mockIsAttachedToTome).not.toHaveBeenCalled();
+    expect(mockPublishEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: "github:delivery-project-1",
+        type: "github.projects_v2_item.edited",
+        subject: "projects_v2_item:PVTI_item",
+        time: new Date("2026-08-27T03:00:00Z"),
+        data: expect.objectContaining({
+          repository_id: null,
+          repository_full_name: null,
+          projects_v2_item: expect.objectContaining({
+            content_node_id: "I_issue",
+          }),
+          projects_v2_changes: expect.objectContaining({
+            field_value: expect.objectContaining({
+              field_node_id: "PVTSSF_status",
+            }),
+          }),
         }),
       }),
     );

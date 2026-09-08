@@ -76,7 +76,11 @@ function normalizedLabels(labels: string[]): string[] {
 
 function toRow(
   issue: LinkedIssueStatus,
-  options: { cachedAt?: Date; fullSyncId?: string } = {},
+  options: {
+    cachedAt?: Date;
+    fullSyncId?: string;
+    projectDisplayStatus?: LinkedIssueStatus["displayStatus"] | null;
+  } = {},
 ): TomeGitHubIssueCacheRow {
   const repo = repoKey(issue.repo);
   return {
@@ -90,6 +94,9 @@ function toRow(
     state: issue.state,
     state_reason: issue.stateReason,
     display_status: issue.displayStatus,
+    ...(options.projectDisplayStatus !== undefined
+      ? { project_display_status: options.projectDisplayStatus }
+      : {}),
     priority: issue.priority,
     labels: issue.labels,
     labels_normalized: normalizedLabels(issue.labels),
@@ -115,7 +122,7 @@ function fromRow(row: TomeGitHubIssueCacheRow): LinkedIssueStatus {
     url: row.url,
     state: row.state,
     stateReason: row.state_reason,
-    displayStatus: row.display_status,
+    displayStatus: row.project_display_status ?? row.display_status,
     priority: row.priority,
     labels: row.labels,
     assignees: row.assignees,
@@ -215,8 +222,19 @@ async function syncRepository(token: string, repo: string): Promise<void> {
         (right.updatedAt ?? "").localeCompare(left.updatedAt ?? ""),
     );
     const cachedAt = new Date();
+    const existingRows = await issues
+      .find({ repo: normalizedRepo, project_display_status: { $exists: true } })
+      .sort({ _id: 1 })
+      .toArray();
+    const projectStatusById = new Map(
+      existingRows.map((row) => [row._id, row.project_display_status]),
+    );
     const writes: AnyBulkWriteOperation<TomeGitHubIssueCacheRow>[] = upstream.map((issue) => {
-      const row = toRow(issue, { cachedAt, fullSyncId: syncId });
+      const row = toRow(issue, {
+        cachedAt,
+        fullSyncId: syncId,
+        projectDisplayStatus: projectStatusById.get(cacheKey(issue)),
+      });
       return {
         replaceOne: {
           filter: { _id: row._id },
@@ -322,11 +340,16 @@ export async function upsertCachedTomeIssue(
     eventType: string;
     deliveryId?: string | null;
     webhook?: boolean;
+    projectDisplayStatus?: LinkedIssueStatus["displayStatus"] | null;
   },
 ): Promise<void> {
-  const row = toRow(issue);
   const issues = await getCollection<TomeGitHubIssueCacheRow>(TOME_COLLECTIONS.GITHUB_ISSUES);
-  const existing = await issues.findOne({ _id: row._id });
+  const existing = await issues.findOne({ _id: cacheKey(issue) });
+  const projectDisplayStatus =
+    metadata.projectDisplayStatus !== undefined
+      ? metadata.projectDisplayStatus
+      : existing?.project_display_status;
+  const row = toRow(issue, { projectDisplayStatus });
   let cacheChanged = false;
   if (!existing || (existing.github_updated_at ?? "") <= (row.github_updated_at ?? "")) {
     await issues.replaceOne({ _id: row._id }, row, { upsert: true });
