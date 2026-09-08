@@ -41,7 +41,7 @@ const agentGatewayRagServer = {
 
 const listCapabilities = { repair_agentgateway: true };
 
-describe("MCPServersTab AgentGateway repair", () => {
+describe("MCPServersTab", () => {
   let serverItems: Record<string, unknown>[];
 
   beforeEach(() => {
@@ -127,11 +127,11 @@ describe("MCPServersTab AgentGateway repair", () => {
     }) as unknown as typeof fetch;
   });
 
-  it("shows the capability-gated AgentGateway repair action in page actions", async () => {
+  it("does not expose the unsafe AgentGateway repair action", async () => {
     render(<MCPServersTab />);
 
     await screen.findByText("Jira");
-    expect(screen.getByRole("button", { name: /Repair AgentGateway/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Repair AgentGateway/i })).not.toBeInTheDocument();
     expect(global.fetch).not.toHaveBeenCalledWith(
       "/api/mcp-servers/agentgateway/sync",
       expect.anything(),
@@ -397,7 +397,6 @@ describe("MCPServersTab AgentGateway repair", () => {
     render(<MCPServersTab />);
 
     await screen.findByText("Jira");
-    expect(screen.queryByRole("button", { name: /Repair AgentGateway/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Probe tools for Jira/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /test mcp tools for jira/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Delete Jira/i })).not.toBeInTheDocument();
@@ -411,11 +410,10 @@ describe("MCPServersTab AgentGateway repair", () => {
     expect(await screen.findByText("Add MCP Server")).toBeInTheDocument();
   });
 
-  it("shows permitted row actions and the capability-gated repair action", async () => {
+  it("shows permitted row actions", async () => {
     render(<MCPServersTab />);
 
     await screen.findByText("Jira");
-    expect(screen.getByRole("button", { name: /Repair AgentGateway/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Probe tools for Jira/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /test mcp tools for jira/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Delete Jira/i })).toBeInTheDocument();
