@@ -27,6 +27,13 @@ interface GitHubRepositoryPayload {
   full_name?: string;
 }
 
+interface GitHubProjectV2ItemPayload {
+  node_id?: string;
+  project_node_id?: string;
+  content_node_id?: string;
+  content_type?: string;
+}
+
 export async function POST(request: Request): Promise<Response> {
   if (process.env.TOME_GITHUB_WEBHOOK_ENABLED !== "true") {
     return new Response(null, { status: 404 });
@@ -52,13 +59,20 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const repository = payload.repository as GitHubRepositoryPayload | undefined;
-  if (!repository?.id || !repository.full_name) {
+  const isProjectV2ItemEvent = eventType === "projects_v2_item";
+  if (!isProjectV2ItemEvent && (!repository?.id || !repository.full_name)) {
     return NextResponse.json(
       { error: "missing repository identity" },
       { status: 400 },
     );
   }
-  if (!(await isRepositoryAttachedToTome(repository.id, repository.full_name))) {
+  if (
+    !isProjectV2ItemEvent &&
+    repository &&
+    (!repository.id ||
+      !repository.full_name ||
+      !(await isRepositoryAttachedToTome(repository.id, repository.full_name)))
+  ) {
     return new Response(null, { status: 404 });
   }
 
@@ -87,25 +101,38 @@ export async function POST(request: Request): Promise<Response> {
   const issue = payload.issue as
     | (GitHubIssueShape & { pull_request?: unknown })
     | undefined;
+  const repositoryFullName = repository?.full_name ?? "";
   const issueSnapshot =
     issue?.number &&
     issue.title &&
     issue.html_url &&
     !("pull_request" in issue)
-      ? linkedIssueFromGitHub(repository.full_name, issue)
+      ? linkedIssueFromGitHub(repositoryFullName, issue)
       : null;
   const pullRequest = payload.pull_request as GitHubIssueShape | undefined;
   const pullRequestSnapshot =
     pullRequest?.number && pullRequest.title && pullRequest.html_url
-      ? linkedIssueFromGitHub(repository.full_name, pullRequest)
+      ? linkedIssueFromGitHub(repositoryFullName, pullRequest)
       : null;
   const discussion = payload.discussion as
     | GitHubDiscussionWebhookShape
     | undefined;
   const discussionSnapshot =
     discussion?.number && discussion.title && discussion.html_url
-      ? linkedDiscussionFromWebhook(repository.full_name, discussion)
+      ? linkedDiscussionFromWebhook(repositoryFullName, discussion)
       : null;
+  const projectV2Item = payload.projects_v2_item as
+    | GitHubProjectV2ItemPayload
+    | undefined;
+  if (
+    isProjectV2ItemEvent &&
+    (!projectV2Item?.node_id || !projectV2Item.content_node_id)
+  ) {
+    return NextResponse.json(
+      { error: "missing Project V2 item identity" },
+      { status: 400 },
+    );
+  }
   const label = payload.label as { name?: unknown } | undefined;
   const labelName = typeof label?.name === "string" ? label.name : null;
   const receivedAt = new Date();
@@ -115,26 +142,35 @@ export async function POST(request: Request): Promise<Response> {
     source: "github",
     type: `github.${eventType}.${action}`,
     subject: issue?.number
-      ? `${repository.full_name}#${issue.number}`
+      ? `${repository?.full_name}#${issue.number}`
       : pullRequest?.number
-        ? `${repository.full_name}#${pullRequest.number}`
+        ? `${repository?.full_name}#${pullRequest.number}`
         : discussion?.number
-          ? `${repository.full_name}:discussion#${discussion.number}`
-          : repository.full_name,
+          ? `${repository?.full_name}:discussion#${discussion.number}`
+          : isProjectV2ItemEvent
+            ? `projects_v2_item:${projectV2Item?.node_id}`
+            : repository?.full_name ?? "github",
     time: githubEventTime(payload) ?? receivedAt,
     received_at: receivedAt,
     data: {
       github_event: eventType,
       action,
       delivery_id: deliveryId,
-      repository_id: repository.id,
-      repository_full_name: repository.full_name,
+      repository_id: repository?.id ?? null,
+      repository_full_name: repository?.full_name ?? null,
       issue_number: issue?.number ?? null,
       issue: issueSnapshot,
       pull_request_number: pullRequest?.number ?? null,
       pull_request: pullRequestSnapshot,
       discussion_number: discussion?.number ?? null,
       discussion: discussionSnapshot,
+      ...(isProjectV2ItemEvent
+        ? {
+            projects_v2_item: projectV2Item,
+            projects_v2_changes: payload.changes ?? null,
+            organization: payload.organization ?? null,
+          }
+        : {}),
       label_name: labelName,
       sender_login: githubSender(payload),
     },
@@ -161,6 +197,8 @@ function githubEventTime(payload: Record<string, unknown>): Date | null {
     (payload.discussion as { updated_at?: unknown } | undefined)?.updated_at,
     (payload.comment as { updated_at?: unknown } | undefined)?.updated_at,
     (payload.milestone as { updated_at?: unknown } | undefined)?.updated_at,
+    (payload.projects_v2_item as { updated_at?: unknown } | undefined)
+      ?.updated_at,
   ];
   for (const candidate of candidates) {
     if (typeof candidate !== "string") continue;

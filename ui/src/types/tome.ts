@@ -154,6 +154,9 @@ export interface TomeGitHubIssueCacheRow {
   state: "open" | "closed";
   state_reason: string | null;
   display_status: "open" | "in_progress" | "resolved";
+  /** When present, an organization Project V2 Status is authoritative for
+   * the board column. GitHub issue labels remain the fallback. */
+  project_display_status?: "open" | "in_progress" | "resolved" | null;
   priority: "critical" | "high" | "medium" | "low" | null;
   labels: string[];
   labels_normalized: string[];
