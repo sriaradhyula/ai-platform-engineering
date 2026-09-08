@@ -102,7 +102,12 @@ async function subjectForEmail(email: string): Promise<string> {
 
 export interface TomeGitHubCredential {
   token?: string;
-  source: "deployment" | "data_steward" | "requester" | "missing";
+  source:
+    | "deployment"
+    | "data_steward"
+    | "team_member"
+    | "requester"
+    | "missing";
   ownerEmail?: string;
 }
 
@@ -144,6 +149,26 @@ export async function resolveTomeGitHubCredential(
 export async function resolveTomeGitHubWriteCredential(
   ctx: TomeProjectContext,
 ): Promise<TomeGitHubCredential> {
+  const assignedSteward = ctx.project.data_steward;
+  if (
+    assignedSteward &&
+    typeof assignedSteward !== "string" &&
+    assignedSteward.type === "team"
+  ) {
+    // Team stewardship has no single OAuth identity. The existing Tome edit
+    // decision proves that the current caller is an authorized team member
+    // (or an admin), so use that caller's connected GitHub credential for the
+    // interactive mutation.
+    if (!ctx.canEdit) return { source: "missing" };
+    const credentials = await resolveForwardedCredentials(ctx).catch(
+      (): ForwardedCredentials => ({}),
+    );
+    const token = credentials.github?.access_token;
+    return token
+      ? { token, source: "team_member", ownerEmail: ctx.user.email }
+      : { source: "missing", ownerEmail: ctx.user.email };
+  }
+
   const ownerEmail = dataStewardUserEmail(ctx.project.data_steward);
   if (!ownerEmail) return { source: "missing" };
 

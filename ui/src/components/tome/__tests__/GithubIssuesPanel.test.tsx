@@ -23,7 +23,14 @@ const issue = {
   updatedAt: "2026-08-27T00:00:00Z",
 };
 
-function issuesResponse(issues = [issue]) {
+function issuesResponse(
+  issues = [issue],
+  overrides: Partial<{
+    credentialConfigured: boolean;
+    writeCredentialConfigured: boolean;
+    availableIssues: typeof issue[];
+  }> = {},
+) {
   return {
     ok: true,
     status: 200,
@@ -35,6 +42,7 @@ function issuesResponse(issues = [issue]) {
         writeCredentialConfigured: true,
         repos: ["example/service"],
         rollupProjectSlugs: ["example-project"],
+        ...overrides,
       },
     }),
   };
@@ -87,6 +95,30 @@ describe("GithubIssuesPanel", () => {
       undefined,
     );
     expect(screen.getByRole("heading", { name: "Critical issues" })).toBeInTheDocument();
+  });
+
+  it("warns non-stewards that issues are read-only without linking credentials", async () => {
+    mockFetch.mockResolvedValue(issuesResponse([issue], {
+      credentialConfigured: false,
+    }));
+
+    render(<GithubIssuesPanel slug="example-project" canEdit={false} />);
+
+    expect(await screen.findByText(
+      "Issues are read-only for you. Only this project's data steward can move or update issues.",
+    )).toBeInTheDocument();
+    expect(screen.queryByText(/GitHub is not connected/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Connected Credentials" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the read-only warning even when GitHub is connected", async () => {
+    mockFetch.mockResolvedValue(issuesResponse());
+
+    render(<GithubIssuesPanel slug="example-project" canEdit={false} />);
+
+    expect(await screen.findByText(
+      "Issues are read-only for you. Only this project's data steward can move or update issues.",
+    )).toBeInTheDocument();
   });
 
   it("adds and removes only TOME-owned tracked labels", async () => {
@@ -147,14 +179,16 @@ describe("GithubIssuesPanel", () => {
   });
 
   it("tracks an issue from an attached repository and mutates the panel data", async () => {
-    const addedIssue = {
+    const cachedIssue = {
       ...issue,
       number: 99,
       title: "Newly tracked work",
+      labels: [],
       url: "https://github.com/example/service/issues/99",
     };
+    const addedIssue = { ...cachedIssue, labels: ["tome:critical"] };
     mockFetch
-      .mockResolvedValueOnce(issuesResponse([]))
+      .mockResolvedValueOnce(issuesResponse([], { availableIssues: [cachedIssue] }))
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -167,13 +201,9 @@ describe("GithubIssuesPanel", () => {
     render(<GithubIssuesPanel slug="example-project" canEdit />);
     await screen.findByLabelText("Search tracked issues");
     fireEvent.click(screen.getByRole("button", { name: "Add issue" }));
-    fireEvent.change(screen.getByLabelText("Repository"), {
-      target: { value: "example/service" },
-    });
-    fireEvent.change(screen.getByLabelText("Issue number"), {
-      target: { value: "99" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Add to TOME" }));
+    fireEvent.click(screen.getByRole("combobox", { name: "Issue" }));
+    fireEvent.click(screen.getByRole("option", { name: /#99 Newly tracked work/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Add / remove labels" }));
 
     expect(await screen.findByText("Newly tracked work")).toBeInTheDocument();
     expect(mockFetch).toHaveBeenNthCalledWith(
@@ -199,5 +229,20 @@ describe("GithubIssuesPanel", () => {
 
     const description = await screen.findByText(body);
     expect(description).toHaveClass("line-clamp-3");
+  });
+
+  it("uses semantic colors for tracked and status labels", async () => {
+    mockFetch.mockResolvedValue(issuesResponse([{
+      ...issue,
+      labels: ["tome:critical", "tome:needs attention", "status:in-progress", "area:tome"],
+    }]));
+
+    render(<GithubIssuesPanel slug="example-project" canEdit={false} />);
+
+    expect(await screen.findByText("Tracked work")).toBeInTheDocument();
+    expect(screen.getByText("tome:critical")).toHaveClass("border-red-300");
+    expect(screen.getByText("tome:needs attention")).toHaveClass("border-amber-300");
+    expect(screen.getByText("status:in-progress")).toHaveClass("border-amber-300");
+    expect(screen.getByText("area:tome")).toHaveClass("border-border");
   });
 });

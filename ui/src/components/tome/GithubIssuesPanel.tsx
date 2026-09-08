@@ -25,8 +25,8 @@ import {
 
 import { BetaBadge } from "@/components/tome/BetaBadge";
 import { PanelShell } from "@/components/tome/PanelHeader";
-import { LabelComboBox } from "@/components/projects/LabelComboBox";
 import { Button } from "@/components/ui/button";
+import { SearchablePicker } from "@/components/ui/searchable-picker";
 import {
   Dialog,
   DialogContent,
@@ -47,6 +47,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
+  matchesTomeTrackedIssueLabel,
   TOME_TRACKED_ISSUE_LABELS,
   type TomeTrackedIssueLabel,
 } from "@/lib/tome/issue-filter-views";
@@ -82,6 +83,7 @@ interface GitHubIssue {
 
 interface IssuesPayload {
   issues: GitHubIssue[];
+  availableIssues?: GitHubIssue[];
   credentialConfigured: boolean;
   writeCredentialConfigured?: boolean;
   writeCredentialOwner?: string | null;
@@ -150,6 +152,48 @@ const PRIORITY_STYLES: Record<IssuePriority, string> = {
   low: "border-slate-300 bg-slate-50 text-slate-700 dark:bg-slate-950/30 dark:text-slate-300",
 };
 
+const ISSUE_LABEL_STYLES = {
+  critical:
+    "border-red-300 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300",
+  attention:
+    "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300",
+  decision:
+    "border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-800 dark:bg-violet-950/30 dark:text-violet-300",
+  status:
+    "border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300",
+  neutral:
+    "border-border bg-muted/50 text-muted-foreground",
+} as const;
+
+function issueLabelStyle(
+  label: string,
+  trackedLabels: readonly TomeTrackedIssueLabel[],
+): string {
+  const normalized = label.trim().toLowerCase();
+  const tracked = trackedLabels.find((candidate) =>
+    [candidate.label, ...(candidate.aliases ?? [])].some(
+      (value) => value.toLowerCase() === normalized,
+    ),
+  );
+
+  if (tracked?.id === "critical" || /(^|[-: ])critical($|[-: ])/i.test(normalized)) {
+    return ISSUE_LABEL_STYLES.critical;
+  }
+  if (
+    tracked?.id === "needs-attention" ||
+    normalized.includes("needs attention") ||
+    normalized.includes("in-progress") ||
+    normalized.includes("in progress")
+  ) {
+    return ISSUE_LABEL_STYLES.attention;
+  }
+  if (tracked?.id === "decision" || normalized.includes("decision")) {
+    return ISSUE_LABEL_STYLES.decision;
+  }
+  if (normalized.startsWith("status:")) return ISSUE_LABEL_STYLES.status;
+  return ISSUE_LABEL_STYLES.neutral;
+}
+
 const STEWARD_CREDENTIAL_ERROR_CODES = new Set([
   "TOME_STEWARD_GITHUB_CREDENTIAL_REQUIRED",
   "TOME_STEWARD_GITHUB_CREDENTIAL_INVALID",
@@ -164,6 +208,24 @@ function issueKey(
     ? "discussion"
     : "issue";
   return `${issue.repo.toLowerCase()}:${type}#${issue.number}`;
+}
+
+function issueTrackedLabels(
+  issue: GitHubIssue,
+  trackedLabels: readonly TomeTrackedIssueLabel[],
+): string[] {
+  return trackedLabels
+    .filter((tracked) => matchesTomeTrackedIssueLabel(issue.labels, tracked))
+    .map((tracked) => tracked.label);
+}
+
+function actualIssueLabel(
+  issue: GitHubIssue,
+  tracked: TomeTrackedIssueLabel,
+): string | undefined {
+  const candidates = new Set([tracked.label, ...(tracked.aliases ?? [])]
+    .map((label) => label.toLowerCase()));
+  return issue.labels.find((label) => candidates.has(label.toLowerCase()));
 }
 
 export function GithubIssuesPanel({
@@ -318,6 +380,10 @@ export function GithubIssuesPanel({
   }, [trackedLabel]);
 
   const issues = useMemo(() => payload?.issues ?? [], [payload?.issues]);
+  const availableIssues = useMemo(
+    () => payload?.availableIssues ?? issues,
+    [issues, payload?.availableIssues],
+  );
   const filteredIssues = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return issues.filter((issue) => {
@@ -339,17 +405,58 @@ export function GithubIssuesPanel({
   const canMoveIssues =
     canEdit && payload?.writeCredentialConfigured !== false;
 
+  const selectedIssue = useMemo(() => {
+    if (!issueRepository || !issueNumber) return undefined;
+    const key = `${issueRepository.toLowerCase()}:issue#${issueNumber}`;
+    return availableIssues.find((issue) => issueKey(issue) === key);
+  }, [availableIssues, issueNumber, issueRepository]);
+
+  const defaultTrackingLabels = useMemo(
+    () => (
+      trackedLabel && trackedLabels.some(({ label }) => label === trackedLabel)
+        ? [trackedLabel]
+        : [trackedLabels[0]?.label ?? TOME_TRACKED_ISSUE_LABELS[0].label]
+    ),
+    [trackedLabel, trackedLabels],
+  );
+
+  const labelChanges = useMemo(() => {
+    if (!selectedIssue) return { add: [] as string[], remove: [] as string[] };
+    const add = trackingLabels.filter(
+      (label) => {
+        const tracked = trackedLabels.find((candidate) => candidate.label === label);
+        return tracked
+          ? !actualIssueLabel(selectedIssue, tracked)
+          : !selectedIssue.labels.some(
+              (candidate) => candidate.toLowerCase() === label.toLowerCase(),
+            );
+      },
+    );
+    const remove = trackedLabels.flatMap((tracked) => {
+      const actual = actualIssueLabel(selectedIssue, tracked);
+      return actual && !trackingLabels.includes(tracked.label) ? [actual] : [];
+    });
+    return { add, remove };
+  }, [selectedIssue, trackedLabels, trackingLabels]);
+
   const openTrackingDialog = useCallback(() => {
     setIssueRepository(payload?.repos.length === 1 ? payload.repos[0] : "");
     setIssueNumber("");
-    setTrackingLabels(
-      trackedLabel && trackedLabels.some(({ label }) => label === trackedLabel)
-        ? [trackedLabel]
-        : [trackedLabels[0]?.label ?? TOME_TRACKED_ISSUE_LABELS[0].label],
-    );
+    setTrackingLabels(defaultTrackingLabels);
     setTrackingError(null);
     setTrackingDialogOpen(true);
-  }, [payload?.repos, trackedLabel, trackedLabels]);
+  }, [defaultTrackingLabels, payload?.repos]);
+
+  const selectIssue = useCallback(
+    (issue: GitHubIssue) => {
+      setIssueRepository(issue.repo);
+      setIssueNumber(String(issue.number));
+      const currentLabels = issueTrackedLabels(issue, trackedLabels);
+      setTrackingLabels(currentLabels.length ? currentLabels : defaultTrackingLabels);
+      setTrackingError(null);
+    },
+    [defaultTrackingLabels, trackedLabels],
+  );
 
   const toggleTrackingLabel = useCallback((label: string) => {
     setTrackingLabels((current) => current.includes(label)
@@ -362,69 +469,78 @@ export function GithubIssuesPanel({
     setPayload((current) => {
       if (!current) return current;
       const exists = current.issues.some((candidate) => issueKey(candidate) === key);
+      const availableIssueExists = current.availableIssues?.some(
+        (candidate) => issueKey(candidate) === key,
+      );
+      const updatedAvailableIssues = current.availableIssues
+        ? availableIssueExists
+          ? current.availableIssues.map((candidate) =>
+              issueKey(candidate) === key ? issue : candidate,
+            )
+          : [issue, ...current.availableIssues]
+        : current.availableIssues;
       if (trackedLabel && !issue.labels.some((label) => label.toLowerCase() === trackedLabel)) {
-        return exists
-          ? {
-              ...current,
-              issues: current.issues.filter((candidate) => issueKey(candidate) !== key),
-            }
-          : current;
+        return {
+          ...current,
+          issues: exists
+            ? current.issues.filter((candidate) => issueKey(candidate) !== key)
+            : current.issues,
+          availableIssues: updatedAvailableIssues,
+        };
       }
       return {
         ...current,
         issues: exists
           ? current.issues.map((candidate) => issueKey(candidate) === key ? issue : candidate)
           : [issue, ...current.issues],
+        availableIssues: updatedAvailableIssues,
       };
     });
   }, [trackedLabel]);
 
   const trackIssue = useCallback(async () => {
-    const repository = payload?.repos.find(
-      (candidate) => candidate.toLowerCase() === issueRepository.trim().toLowerCase(),
-    );
-    const number = Number(issueNumber);
-    if (!repository) {
-      setTrackingError("Choose a repository attached to this TOME project.");
+    if (!selectedIssue) {
+      setTrackingError("Choose a cached GitHub issue.");
       return;
     }
-    if (!Number.isSafeInteger(number) || number <= 0) {
-      setTrackingError("Enter a positive GitHub issue number.");
-      return;
-    }
-    if (!trackingLabels.length) {
-      setTrackingError("Choose at least one TOME label.");
+    if (!labelChanges.add.length && !labelChanges.remove.length) {
+      setTrackingError("Choose at least one label to add or remove.");
       return;
     }
 
     setTrackingIssue(true);
     setTrackingError(null);
     try {
-      for (const label of trackingLabels) {
-        const result = await fetchJson<IssueMutationPayload>(
-          `/api/tome/projects/${encodeURIComponent(slug)}/github-issues`,
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              repo: repository,
-              number,
-              label,
-              operation: "add",
-            }),
-          },
-        );
-        upsertTrackedIssue(result.issue);
+      for (const [operation, labels] of [
+        ["add", labelChanges.add],
+        ["remove", labelChanges.remove],
+      ] as const) {
+        for (const label of labels) {
+          const result = await fetchJson<IssueMutationPayload>(
+            `/api/tome/projects/${encodeURIComponent(slug)}/github-issues`,
+            {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                repo: selectedIssue.repo,
+                number: selectedIssue.number,
+                label,
+                operation,
+              }),
+            },
+          );
+          upsertTrackedIssue(result.issue);
+        }
       }
       setTrackingDialogOpen(false);
     } catch (err) {
       setTrackingError(
-        err instanceof Error ? err.message : "Could not add this issue to TOME.",
+        err instanceof Error ? err.message : "Could not update this issue's labels.",
       );
     } finally {
       setTrackingIssue(false);
     }
-  }, [issueNumber, issueRepository, payload?.repos, slug, trackingLabels, upsertTrackedIssue]);
+  }, [labelChanges, selectedIssue, slug, upsertTrackedIssue]);
 
   const finishIssueDrag = useCallback(() => {
     dragSourceRef.current = null;
@@ -744,38 +860,65 @@ export function GithubIssuesPanel({
               >
                 <DialogContent className="sm:max-w-lg">
                   <DialogHeader>
-                    <DialogTitle>Track GitHub issue</DialogTitle>
+                    <DialogTitle>Manage GitHub issue labels</DialogTitle>
                     <DialogDescription>
-                      Choose an attached repository and issue number. TOME adds the
-                      selected labels in GitHub and immediately includes the issue here.
+                      Choose a cached issue, then add or remove the selected TOME
+                      labels in GitHub.
                     </DialogDescription>
                   </DialogHeader>
-                  <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_9rem]">
+                  <div className="grid gap-3 sm:grid-cols-2">
                     <div className="space-y-2">
                       <label className="text-sm font-medium">Repository</label>
-                      <LabelComboBox
-                        value={issueRepository}
-                        onChange={setIssueRepository}
-                        options={(payload?.repos ?? []).map((repo) => ({
-                          value: repo,
-                          label: repo,
-                        }))}
-                        placeholder="Type to find a repository"
+                      <SearchablePicker
+                        options={payload?.repos ?? []}
+                        selected={payload?.repos.find(
+                          (repo) => repo.toLowerCase() === issueRepository.toLowerCase(),
+                        )}
+                        onSelect={(repo) => {
+                          setIssueRepository(repo);
+                          setIssueNumber("");
+                          setTrackingLabels(defaultTrackingLabels);
+                          setTrackingError(null);
+                        }}
+                        getOptionKey={(repo) => repo}
+                        getOptionLabel={(repo) => repo}
+                        placeholder="Choose a repository"
+                        searchPlaceholder="Search repositories..."
+                        emptyLabel="No attached repositories"
                         ariaLabel="Repository"
-                        inputClassName="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                        triggerClassName="h-10"
+                        contentClassName="w-[min(520px,90vw)]"
                       />
                     </div>
                     <div className="space-y-2">
-                      <label htmlFor="tome-github-issue-number" className="text-sm font-medium">
-                        Issue number
-                      </label>
-                      <Input
-                        id="tome-github-issue-number"
-                        value={issueNumber}
-                        onChange={(event) => setIssueNumber(event.target.value)}
-                        placeholder="123"
-                        inputMode="numeric"
-                        autoFocus
+                      <label className="text-sm font-medium">Issue</label>
+                      <SearchablePicker
+                        options={availableIssues.filter(
+                          (issue) => issue.repo.toLowerCase() === issueRepository.toLowerCase(),
+                        )}
+                        selected={selectedIssue}
+                        onSelect={selectIssue}
+                        getOptionKey={(issue) => issueKey(issue)}
+                        getOptionLabel={(issue) => `#${issue.number} ${issue.title}`}
+                        getSearchText={(issue) => [
+                          String(issue.number),
+                          issue.title,
+                          issue.repo,
+                        ]}
+                        renderOption={(issue) => (
+                          <span className="min-w-0">
+                            <span className="block truncate">#{issue.number} {issue.title}</span>
+                            <span className="block truncate text-xs text-muted-foreground">
+                              {issue.repo}
+                            </span>
+                          </span>
+                        )}
+                        placeholder="Choose an issue"
+                        searchPlaceholder="Search cached issues..."
+                        emptyLabel="No cached issues for this repository"
+                        ariaLabel="Issue"
+                        triggerClassName="h-10"
+                        contentClassName="w-[min(520px,90vw)]"
                       />
                     </div>
                   </div>
@@ -794,7 +937,7 @@ export function GithubIssuesPanel({
                             type="checkbox"
                             checked={trackingLabels.includes(tracked.label)}
                             onChange={() => toggleTrackingLabel(tracked.label)}
-                            disabled={trackingIssue}
+                            disabled={trackingIssue || !selectedIssue}
                           />
                           {tracked.title}
                         </label>
@@ -820,13 +963,12 @@ export function GithubIssuesPanel({
                       onClick={() => void trackIssue()}
                       disabled={
                         trackingIssue ||
-                        !issueRepository.trim() ||
-                        !issueNumber.trim() ||
-                        !trackingLabels.length
+                        !selectedIssue ||
+                        (!labelChanges.add.length && !labelChanges.remove.length)
                       }
                     >
                       {trackingIssue && <Loader2 className="h-4 w-4 animate-spin" />}
-                      Add to TOME
+                      Add / remove labels
                     </Button>
                   </DialogFooter>
                 </DialogContent>
@@ -855,12 +997,23 @@ export function GithubIssuesPanel({
         </div>
       }
     >
-      {payload && !payload.credentialConfigured && (
+      {payload && !canEdit && (
         <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <p>
-            GitHub is not connected. Cached issues remain available, but refreshes
-            require this project&apos;s data steward to authorize GitHub in{" "}
+            Issues are read-only for you. Only this project&apos;s data steward
+            can move or update issues.
+          </p>
+        </div>
+      )}
+
+      {payload && canEdit && !payload.credentialConfigured && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>
+            GitHub is not connected. Cached issues remain available, but
+            refreshes require this project&apos;s data steward to authorize
+            GitHub in{" "}
             <Link href="/credentials" className="font-medium underline">
               Connected Credentials
             </Link>
@@ -1068,7 +1221,11 @@ export function GithubIssuesPanel({
                           {issue.labels.map((label) => (
                             <span
                               key={label}
-                              className="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground"
+                              data-issue-label={label}
+                              className={cn(
+                                "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium",
+                                issueLabelStyle(label, trackedLabels),
+                              )}
                             >
                               {label}
                             </span>

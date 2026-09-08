@@ -124,6 +124,9 @@ export const GET = withErrorHandler(async (request: NextRequest, ctx: Ctx) => {
       .sort((left, right) => right.getTime() - left.getTime())[0] ?? null;
     return successResponse({
       issues,
+      availableIssues: cached.issues.filter(
+        (issue) => issue.contentType !== "discussion",
+      ),
       credentialConfigured: Boolean(credential.token),
       credentialSource: credential.source,
       writeCredentialConfigured: Boolean(writeCredential.token),

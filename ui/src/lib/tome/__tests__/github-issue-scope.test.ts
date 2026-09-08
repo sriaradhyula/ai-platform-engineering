@@ -1,5 +1,6 @@
 const mockGetCollection = jest.fn();
 const mockResolveCredentialsForSub = jest.fn();
+const mockResolveForwardedCredentials = jest.fn();
 
 jest.mock("@/lib/mongodb", () => ({
   getCollection: (...args: unknown[]) => mockGetCollection(...args),
@@ -10,7 +11,8 @@ jest.mock("@/lib/tome/access", () => ({
 jest.mock("@/lib/tome/agent-proxy", () => ({
   resolveCredentialsForSub: (...args: unknown[]) =>
     mockResolveCredentialsForSub(...args),
-  resolveForwardedCredentials: jest.fn(),
+  resolveForwardedCredentials: (...args: unknown[]) =>
+    mockResolveForwardedCredentials(...args),
 }));
 jest.mock("@/lib/tome/data-steward", () => ({ tomeSessionSubject: jest.fn() }));
 
@@ -129,5 +131,52 @@ describe("github-issue-scope", () => {
       ownerEmail: "steward@example.test",
     });
     expect(mockResolveCredentialsForSub).toHaveBeenCalledWith("steward-sub");
+  });
+
+  it("resolves issue writes from an authorized team member's credential", async () => {
+    mockResolveForwardedCredentials.mockResolvedValue({
+      github: { access_token: "member-token" },
+    });
+    const ctx = {
+      project: project("example", {
+        data_steward: {
+          type: "team",
+          id: "example-team",
+          name: "Example Team",
+        },
+      }),
+      user: { email: "member@example.test" },
+      session: { sub: "member-sub" },
+      canEdit: true,
+    } as TomeProjectContext;
+
+    await expect(resolveTomeGitHubWriteCredential(ctx)).resolves.toEqual({
+      token: "member-token",
+      source: "team_member",
+      ownerEmail: "member@example.test",
+    });
+    expect(mockResolveForwardedCredentials).toHaveBeenCalledWith(ctx);
+  });
+
+  it("does not use a team member credential without edit authorization", async () => {
+    mockResolveForwardedCredentials.mockResolvedValue({
+      github: { access_token: "member-token" },
+    });
+    const ctx = {
+      project: project("example", {
+        data_steward: {
+          type: "team",
+          id: "example-team",
+          name: "Example Team",
+        },
+      }),
+      user: { email: "viewer@example.test" },
+      canEdit: false,
+    } as TomeProjectContext;
+
+    await expect(resolveTomeGitHubWriteCredential(ctx)).resolves.toEqual({
+      source: "missing",
+    });
+    expect(mockResolveForwardedCredentials).not.toHaveBeenCalled();
   });
 });
