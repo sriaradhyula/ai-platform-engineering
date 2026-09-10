@@ -693,6 +693,12 @@ If secondary-provider validation fails, TOME still attempts the normal Keycloak
 bearer flow, allowing both token issuers to coexist during rollout. Invalid
 tokens ultimately receive `401 Unauthorized`.
 
+For temporary diagnostics, set `TOME_MCP_AUTH_DEBUG=true`. Rejected requests
+then log a request ID, a truncated SHA-256 token fingerprint, JWT `alg`, `kid`,
+`typ`, `iss`, `aud`, and time claims, plus the secondary and primary validation
+error codes. The bearer token, signature, subject, email, and request body are
+never logged. Disable the setting after troubleshooting to reduce log volume.
+
 For existing deployments, the old `TOME_MCP_CIRCUIT_JWKS_URI`,
 `TOME_MCP_CIRCUIT_ISSUER`, and `TOME_MCP_CIRCUIT_AUDIENCES` names remain
 supported as deprecated aliases. The `TOME_MCP_SECONDARY_OIDC_*` names take
