@@ -211,27 +211,36 @@ it("excludes every attached project source from a Webex meeting-only ingest", ()
   });
 });
 
-it("excludes child-project context from an Area meeting-only ingest", () => {
-  const request = buildIngestRequest(synthesizedProject("area"), {
-    runId: "run-1",
-    reportId: "report-1",
-    seed: null,
-    isGreenfield: false,
-    sourceScope: "webex_meetings",
-    childProjects: [
-      { project_id: "child-1", slug: "child-one", name: "Child one" },
-    ],
-    readableProjects: [
-      { project_id: "child-1", slug: "child-one", name: "Child one" },
-    ],
-    connectorData: {
-      webex: {
-        meetings: [{ id: "meeting-1", title: "Area sync", start: "2026-09-03T10:00:00Z" }],
+it.each(["area", "bhag"] as const)(
+  "excludes child-project context from a %s meeting-only ingest",
+  (projectType) => {
+    const request = buildIngestRequest(synthesizedProject(projectType), {
+      runId: "run-1",
+      reportId: "report-1",
+      seed: null,
+      isGreenfield: false,
+      sourceScope: "webex_meetings",
+      childProjects: [
+        { project_id: "child-1", slug: "child-one", name: "Child one" },
+      ],
+      readableProjects: [
+        { project_id: "child-1", slug: "child-one", name: "Child one" },
+      ],
+      connectorData: {
+        webex: {
+          meetings: [
+            {
+              id: "meeting-1",
+              title: "Leadership sync",
+              start: "2026-09-03T10:00:00Z",
+            },
+          ],
+        },
       },
-    },
-  });
+    });
 
-  expect(request.snapshot.project_type).toBe("area");
-  expect(request.snapshot.child_projects).toEqual([]);
-  expect(request.snapshot.readable_projects).toEqual([]);
-});
+    expect(request.snapshot.project_type).toBe(projectType);
+    expect(request.snapshot.child_projects).toEqual([]);
+    expect(request.snapshot.readable_projects).toEqual([]);
+  },
+);

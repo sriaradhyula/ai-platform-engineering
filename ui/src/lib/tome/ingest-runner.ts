@@ -320,8 +320,8 @@ async function prepareRun(
   const scopedProject = meetingOnly ? { ...project, sources: {} } : project;
 
   // BHAGs and Areas carry their child projects for synthesis/compaction. A
-  // meeting-only Area run remains scoped to that transcript and reads no
-  // unrelated child wiki, matching its attached-source isolation above.
+  // meeting-only synthesized-entity run remains scoped to that transcript and
+  // reads no unrelated child wiki, matching its attached-source isolation above.
   const endpoint = dispatch.endpoint || "/ingest";
   const isBhag = project.type === "bhag";
   const isArea = project.type === "area";

@@ -119,10 +119,10 @@ export function isSynthesizedType(type: ProjectType | undefined): boolean {
   return type === "bhag" || type === "area";
 }
 
-/** Recurring Webex meetings can feed regular project and Area wikis. BHAGs
- * remain synthesis-only because their content rolls up Areas/projects. */
+/** Recurring Webex meetings can feed every Tome entity type. Legacy records
+ * with no explicit type are regular projects and remain supported. */
 export function supportsWebexMeetingSeries(type: ProjectType | undefined): boolean {
-  return type !== "bhag";
+  return type === undefined || type === "project" || type === "area" || type === "bhag";
 }
 
 /**

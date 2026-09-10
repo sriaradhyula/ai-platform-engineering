@@ -33,7 +33,7 @@ export const POST = withErrorHandler(async (request: NextRequest, context: Ctx) 
   requireTomeEditor(tctx);
   if (!supportsWebexMeetingSeries(tctx.project.type)) {
     throw new ApiError(
-      "Meeting-series ingestion is available on projects and Areas, not BHAGs.",
+      "Meeting-series ingestion is unavailable for this Tome entity type.",
       400,
       "MEETING_SERIES_PROJECT_REQUIRED",
     );

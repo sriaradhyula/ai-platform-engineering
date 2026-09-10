@@ -469,11 +469,19 @@ describe("ProjectSettingsPanel hierarchy hydration", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps recurring Webex auto-ingest unavailable for a BHAG", async () => {
+  it("shows recurring Webex auto-ingest settings for a BHAG", async () => {
     installEntitySettingsFetch("bhag");
     renderSettings({ slug: "example-bhag" });
 
     expect(await screen.findByText("BHAG settings")).toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: "Auto-ingest" })).not.toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "Auto-ingest" }), {
+      button: 0,
+      ctrlKey: false,
+    });
+
+    expect(await screen.findByText("Recurring Webex meetings")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", { name: "Enable scheduled auto-ingest" }),
+    ).not.toBeInTheDocument();
   });
 });

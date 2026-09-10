@@ -483,7 +483,7 @@ export function buildIngestRequest(
     opts.sourceScope === "webex_meetings" ? { ...project, sources: {} } : project,
   );
   // A meeting-only run must not pull unrelated child-wiki context into an
-  // Area ingest, just as it excludes directly attached connector sources.
+  // Area or BHAG ingest, just as it excludes directly attached connector sources.
   if (opts.sourceScope !== "webex_meetings" && opts.childProjects?.length) {
     snapshot.child_projects = opts.childProjects;
   }
