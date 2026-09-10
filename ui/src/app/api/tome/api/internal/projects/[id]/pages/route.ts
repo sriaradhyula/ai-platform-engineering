@@ -14,6 +14,7 @@ import {
   getExperimentArtifact,
   writeExperimentArtifactPage,
 } from "@/lib/tome/evaluation-store";
+import { preserveStoredKind } from "@/lib/tome/page-kind-guard";
 import { parseFrontmatter, SPEC_BY_PATH } from "@/lib/tome/schema";
 import type { TomeReviewMode } from "@/types/projects";
 
@@ -115,6 +116,27 @@ export const POST = withErrorHandler(async (request: NextRequest, ctx: Ctx) => {
     }
   }
 
+  const store = await getPageStore();
+
+  // `kind` is code-owned on agent writes (#369, #348): an agent may set the
+  // kind of a page it creates, but may never change one an existing page
+  // already declares — that is a human decision made through the UI toggle
+  // on the user-facing PUT route. Applied BEFORE the review gate below so
+  // the gate sees the page's real kind, not the one the agent proposed; a
+  // write that de-pinned a stable page used to be classified `dynamic` by
+  // its own new frontmatter and so skipped stable-page review entirely.
+  const stored = await store
+    .readPage(project._id, body.path)
+    .catch(() => null);
+  const guard = preserveStoredKind(stored, body.body);
+  if (guard.blocked) {
+    console.warn(
+      `[tome-page-kind] refused agent kind change on ${project._id}/${body.path}: ` +
+        `${guard.storedKind} -> ${guard.attemptedKind ?? "(none)"}; kept ${guard.storedKind}`,
+    );
+  }
+  const markdown = guard.markdown;
+
   // Chat writes are explicit, data-steward-authorized user requests. They do
   // not have an ingest report or a review surface, so publishing them as
   // drafts would create revisions that neither the user nor agent can resolve.
@@ -123,18 +145,17 @@ export const POST = withErrorHandler(async (request: NextRequest, ctx: Ctx) => {
         reportId: body.report_id,
         reviewMode: project.review_mode,
         path: body.path,
-        markdown: body.body,
+        markdown,
       })
     : "live";
 
-  const store = await getPageStore();
-  await store.writePage(project._id, body.path, body.body, {
+  await store.writePage(project._id, body.path, markdown, {
     message: body.message || `agent wrote ${body.path}`,
     author: body.author || "tome-agent",
     reportId: body.report_id ?? undefined,
     ...(status === "draft" ? { status: "draft" as const } : {}),
   });
-  return Response.json({ ok: true });
+  return Response.json({ ok: true, kind_change_blocked: guard.blocked });
 });
 
 /** True if `path`/`markdown` resolve to `kind: stable` (or `hidden` — same

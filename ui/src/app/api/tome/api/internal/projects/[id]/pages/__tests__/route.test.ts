@@ -7,6 +7,9 @@ import { NextRequest } from "next/server";
 const mockRequireAgentToken = jest.fn();
 const mockResolveProject = jest.fn();
 const mockGetPageStore = jest.fn();
+// Every agent write now reads the stored page first (page-kind guard, #369).
+// Default: page does not exist yet, so the guard is a no-op.
+const mockReadPage = jest.fn();
 const mockCheckOpenFgaTuple = jest.fn();
 const mockGetTomeIngestRunsCollection = jest.fn();
 const mockGetExperiment = jest.fn();
@@ -68,8 +71,10 @@ describe("internal pages POST — FGA enforcement for chat-initiated writes", ()
     process.env.TOME_AGENT_TOKEN = "agent-tok";
     mockRequireAgentToken.mockReturnValue(undefined);
     mockResolveProject.mockResolvedValue(PROJECT);
+    mockReadPage.mockRejectedValue(new Error("page not found"));
     mockGetPageStore.mockResolvedValue({
       writePage: jest.fn().mockResolvedValue(undefined),
+      readPage: mockReadPage,
     });
     mockGetTomeIngestRunsCollection.mockResolvedValue({
       findOne: jest.fn().mockResolvedValue(null),
@@ -115,7 +120,7 @@ describe("internal pages POST — FGA enforcement for chat-initiated writes", ()
   it("publishes a chat write live when actor_sub has can_write", async () => {
     mockCheckOpenFgaTuple.mockResolvedValue({ allowed: true });
     const mockWritePage = jest.fn().mockResolvedValue(undefined);
-    mockGetPageStore.mockResolvedValue({ writePage: mockWritePage });
+    mockGetPageStore.mockResolvedValue({ writePage: mockWritePage, readPage: mockReadPage });
 
     const { POST } = await import("../route");
     const res = await POST(
@@ -138,7 +143,7 @@ describe("internal pages POST — FGA enforcement for chat-initiated writes", ()
 
   it("skips FGA check for ingest writes (report_id present)", async () => {
     const mockWritePage = jest.fn().mockResolvedValue(undefined);
-    mockGetPageStore.mockResolvedValue({ writePage: mockWritePage });
+    mockGetPageStore.mockResolvedValue({ writePage: mockWritePage, readPage: mockReadPage });
     mockGetTomeIngestRunsCollection.mockResolvedValue({
       findOne: jest.fn().mockResolvedValue({ dispatch: { skipReview: false } }),
     });
@@ -166,7 +171,7 @@ describe("internal pages POST — FGA enforcement for chat-initiated writes", ()
   it("publishes ingest writes live when project review is disabled", async () => {
     const mockWritePage = jest.fn().mockResolvedValue(undefined);
     mockResolveProject.mockResolvedValue({ ...PROJECT, review_mode: "none" });
-    mockGetPageStore.mockResolvedValue({ writePage: mockWritePage });
+    mockGetPageStore.mockResolvedValue({ writePage: mockWritePage, readPage: mockReadPage });
     mockGetTomeIngestRunsCollection.mockResolvedValue({
       findOne: jest.fn().mockResolvedValue({ dispatch: { skipReview: false } }),
     });
@@ -193,7 +198,7 @@ describe("internal pages POST — FGA enforcement for chat-initiated writes", ()
   it("publishes dynamic pages live in stable-only mode", async () => {
     const mockWritePage = jest.fn().mockResolvedValue(undefined);
     mockResolveProject.mockResolvedValue({ ...PROJECT, review_mode: "stable_only" });
-    mockGetPageStore.mockResolvedValue({ writePage: mockWritePage });
+    mockGetPageStore.mockResolvedValue({ writePage: mockWritePage, readPage: mockReadPage });
 
     const { POST } = await import("../route");
     const res = await POST(
@@ -217,7 +222,7 @@ describe("internal pages POST — FGA enforcement for chat-initiated writes", ()
   it("drafts dynamic pages when all writes require review", async () => {
     const mockWritePage = jest.fn().mockResolvedValue(undefined);
     mockResolveProject.mockResolvedValue({ ...PROJECT, review_mode: "all" });
-    mockGetPageStore.mockResolvedValue({ writePage: mockWritePage });
+    mockGetPageStore.mockResolvedValue({ writePage: mockWritePage, readPage: mockReadPage });
 
     const { POST } = await import("../route");
     const res = await POST(
@@ -241,7 +246,7 @@ describe("internal pages POST — FGA enforcement for chat-initiated writes", ()
   it("lets an ingest's explicit skip-review override publish live", async () => {
     const mockWritePage = jest.fn().mockResolvedValue(undefined);
     mockResolveProject.mockResolvedValue({ ...PROJECT, review_mode: "all" });
-    mockGetPageStore.mockResolvedValue({ writePage: mockWritePage });
+    mockGetPageStore.mockResolvedValue({ writePage: mockWritePage, readPage: mockReadPage });
     mockGetTomeIngestRunsCollection.mockResolvedValue({
       findOne: jest.fn().mockResolvedValue({ dispatch: { skipReview: true } }),
     });
@@ -268,7 +273,7 @@ describe("internal pages POST — FGA enforcement for chat-initiated writes", ()
   it("keeps enforced-quality ingest writes in draft despite no-review settings", async () => {
     const mockWritePage = jest.fn().mockResolvedValue(undefined);
     mockResolveProject.mockResolvedValue({ ...PROJECT, review_mode: "none" });
-    mockGetPageStore.mockResolvedValue({ writePage: mockWritePage });
+    mockGetPageStore.mockResolvedValue({ writePage: mockWritePage, readPage: mockReadPage });
     mockGetTomeIngestRunsCollection.mockResolvedValue({
       findOne: jest.fn().mockResolvedValue({
         dispatch: { skipReview: true },
@@ -304,7 +309,7 @@ describe("internal pages POST — FGA enforcement for chat-initiated writes", ()
       project_id: "proj-1",
     });
     const mockWritePage = jest.fn();
-    mockGetPageStore.mockResolvedValue({ writePage: mockWritePage });
+    mockGetPageStore.mockResolvedValue({ writePage: mockWritePage, readPage: mockReadPage });
 
     const { POST } = await import("../route");
     const res = await POST(postRequest({
@@ -353,5 +358,179 @@ describe("internal pages POST — FGA enforcement for chat-initiated writes", ()
       code: "QUICK_EVALUATION_PAGE_SCOPE",
     });
     expect(mockWriteExperimentArtifactPage).not.toHaveBeenCalled();
+  });
+});
+
+describe("internal pages POST — page-kind guard (#369, #348)", () => {
+  const PINNED = "---\ntitle: Roadmap\nkind: stable\norder: 3\n---\n# Roadmap\n\nBody.\n";
+  const REPORT = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  let mockWritePage: jest.Mock;
+
+  beforeEach(() => {
+    jest.resetModules();
+    jest.clearAllMocks();
+    process.env.TOME_AGENT_TOKEN = "agent-tok";
+    mockRequireAgentToken.mockReturnValue(undefined);
+    mockResolveProject.mockResolvedValue(PROJECT);
+    mockWritePage = jest.fn().mockResolvedValue(undefined);
+    mockReadPage.mockResolvedValue(PINNED);
+    mockGetPageStore.mockResolvedValue({
+      writePage: mockWritePage,
+      readPage: mockReadPage,
+    });
+    mockGetTomeIngestRunsCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue({ dispatch: { skipReview: false } }),
+    });
+    mockGetExperiment.mockResolvedValue(null);
+    mockGetExperimentArtifact.mockResolvedValue(null);
+    mockCheckOpenFgaTuple.mockResolvedValue({ allowed: true });
+  });
+
+  it("restores the pinned kind on an ingest write that tries to flip it", async () => {
+    const { POST } = await import("../route");
+    const res = await POST(
+      postRequest({
+        path: "roadmap.md",
+        body: PINNED.replace("kind: stable", "kind: dynamic"),
+        report_id: REPORT,
+      }),
+      ctx(),
+    );
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ kind_change_blocked: true });
+    expect(mockWritePage).toHaveBeenCalledWith(
+      "proj-1",
+      "roadmap.md",
+      PINNED,
+      expect.anything(),
+    );
+  });
+
+  it("restores the pinned kind on a chat write too", async () => {
+    const { POST } = await import("../route");
+    const res = await POST(
+      postRequest({
+        path: "roadmap.md",
+        body: PINNED.replace("kind: stable", "kind: dynamic"),
+        actor_sub: "steward-sub-456",
+      }),
+      ctx(),
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockWritePage.mock.calls[0][2]).toContain("kind: stable");
+  });
+
+  it("still routes the de-pinning write through stable-page review", async () => {
+    // Before the guard, the write that flipped stable -> dynamic was
+    // classified by its own new frontmatter, so it read as a dynamic write
+    // and published live — skipping the very review that should have caught
+    // it. The gate must see the page's real (stored) kind.
+    mockResolveProject.mockResolvedValue({ ...PROJECT, review_mode: "stable_only" });
+
+    const { POST } = await import("../route");
+    const res = await POST(
+      postRequest({
+        path: "roadmap.md",
+        body: PINNED.replace("kind: stable", "kind: dynamic"),
+        report_id: REPORT,
+      }),
+      ctx(),
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockWritePage).toHaveBeenCalledWith(
+      "proj-1",
+      "roadmap.md",
+      PINNED,
+      expect.objectContaining({ status: "draft" }),
+    );
+  });
+
+  it("keeps body edits from the same write while restoring the kind", async () => {
+    const { POST } = await import("../route");
+    await POST(
+      postRequest({
+        path: "roadmap.md",
+        body: "---\ntitle: Roadmap\nkind: dynamic\norder: 3\n---\n# Roadmap\n\nQ4 milestones.\n",
+        report_id: REPORT,
+      }),
+      ctx(),
+    );
+
+    const written = mockWritePage.mock.calls[0][2] as string;
+    expect(written).toContain("kind: stable");
+    expect(written).toContain("Q4 milestones.");
+  });
+
+  it("leaves a write that keeps the stored kind byte-identical", async () => {
+    const incoming = PINNED.replace("Body.", "Updated body.");
+    const { POST } = await import("../route");
+    const res = await POST(
+      postRequest({ path: "roadmap.md", body: incoming, report_id: REPORT }),
+      ctx(),
+    );
+
+    await expect(res.json()).resolves.toMatchObject({ kind_change_blocked: false });
+    expect(mockWritePage).toHaveBeenCalledWith(
+      "proj-1",
+      "roadmap.md",
+      incoming,
+      expect.anything(),
+    );
+  });
+
+  it("lets the agent set the kind on a page that does not exist yet", async () => {
+    mockReadPage.mockRejectedValue(new Error("page not found"));
+    const body = "---\ntitle: Activity\nkind: dynamic\n---\n# Activity";
+
+    const { POST } = await import("../route");
+    const res = await POST(
+      postRequest({ path: "activity.md", body, report_id: REPORT }),
+      ctx(),
+    );
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ kind_change_blocked: false });
+    expect(mockWritePage).toHaveBeenCalledWith("proj-1", "activity.md", body, expect.anything());
+  });
+
+  it("does not let a read failure block the write", async () => {
+    mockReadPage.mockRejectedValue(new Error("mongo unavailable"));
+    const body = "---\nkind: dynamic\n---\n# Activity";
+
+    const { POST } = await import("../route");
+    const res = await POST(
+      postRequest({ path: "activity.md", body, report_id: REPORT }),
+      ctx(),
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockWritePage).toHaveBeenCalled();
+  });
+
+  it("never reads or guards an isolated experiment write", async () => {
+    mockGetExperiment.mockResolvedValue({ _id: "experiment-1", project_id: "proj-1" });
+    mockGetExperimentArtifact.mockResolvedValue({
+      _id: "artifact-1",
+      experiment_id: "experiment-1",
+      project_id: "proj-1",
+    });
+
+    const { POST } = await import("../route");
+    await POST(
+      postRequest({
+        path: "roadmap.md",
+        body: "---\nkind: dynamic\n---\n# Candidate",
+        report_id: REPORT,
+        experiment_id: "experiment-1",
+        artifact_id: "artifact-1",
+      }),
+      ctx(),
+    );
+
+    expect(mockReadPage).not.toHaveBeenCalled();
+    expect(mockWritePage).not.toHaveBeenCalled();
   });
 });

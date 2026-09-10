@@ -71,24 +71,28 @@ def _template_change_note(
     """Diff the current templates against pages already on disk.
 
     Returns `(prompt_block, log_summary)`. `prompt_block` lists templated
-    pages that don't exist yet (a template edit added them) and pages whose
-    on-disk kind no longer matches the template, or "" when everything is
-    in sync — fed into the agent's system prompt so an incremental run acts
-    on template edits made since the last ingest instead of silently
-    receiving the new page list. `log_summary` is a short human-readable
-    line for the ingest log (None when nothing changed) — the agent seeing
-    this in its prompt is not the same as the person watching the run
-    knowing about it."""
+    pages that don't exist yet (a template edit added them), or "" when
+    everything is in sync — fed into the agent's system prompt so an
+    incremental run acts on template edits made since the last ingest
+    instead of silently receiving the new page list. `log_summary` is a
+    short human-readable line for the ingest log (None when nothing
+    changed) — the agent seeing this in its prompt is not the same as the
+    person watching the run knowing about it.
+
+    This deliberately does NOT report page-kind drift (#369, #348). It used
+    to, with a line reading "`<path>` kind changed stable → dynamic in the
+    template. Treat it as <kind> going forward." — and the agent obeyed,
+    rewriting the page's frontmatter. Because a user pinning a page via the
+    UI toggle is indistinguishable here from an admin editing the template,
+    every pin on a template-`dynamic` page created drift that the next run
+    "reconciled" away; production history shows 20 of 77 pins destroyed
+    that way. The template's kind now governs only pages the agent CREATES;
+    an existing page's kind is the human's to change, and the write route
+    enforces that regardless of what the agent puts in frontmatter."""
     expected = expected_template_pages(snapshot)
 
-    existing_kinds = report_schema.kinds_from_pages(existing_pages)
     missing = sorted(p for p in expected if p not in existing_pages)
-    kind_changed = sorted(
-        (p, existing_kinds[p], expected[p].kind)
-        for p in expected
-        if p in existing_kinds and existing_kinds[p] != expected[p].kind
-    )
-    if not missing and not kind_changed:
+    if not missing:
         return "", None
 
     lines = [
@@ -103,17 +107,10 @@ def _template_change_note(
             f"- NEW page `{path}` ({spec.kind}) — \"{spec.title}\" is in the "
             "template but not yet on disk. Create it this run."
         )
-    for path, old_kind, new_kind in kind_changed:
-        lines.append(
-            f"- `{path}` kind changed {old_kind} → {new_kind} in the template. "
-            f"Treat it as {new_kind} going forward."
-        )
-    summary_parts = []
-    if missing:
-        summary_parts.append(f"{len(missing)} new page(s) from the template")
-    if kind_changed:
-        summary_parts.append(f"{len(kind_changed)} page kind change(s)")
-    summary = "template config changed since last ingest: " + ", ".join(summary_parts)
+    summary = (
+        "template config changed since last ingest: "
+        f"{len(missing)} new page(s) from the template"
+    )
     return "\n".join(lines) + "\n\n", summary
 
 
@@ -154,6 +151,7 @@ def _build_system_prompt(
     template_note: str = "",
     quick: bool = False,
     issue_context: IssueContext | None = None,
+    existing_pages: dict[str, str] | None = None,
 ) -> str:
     """Compose the ingest agent's system prompt by iterating REGISTRY."""
     # Forced, unconditional: the full template (path/kind/title + seed body/
@@ -236,7 +234,26 @@ def _build_system_prompt(
     #   - greenfield, opt-in ON: the team explicitly authorized a best-effort
     #     first-pass DRAFT — read each, then overwrite with sourced content,
     #     clearly framed as an agent draft for human review.
-    stable_paths = ", ".join(f"`{p}`" for p in report_schema.default_stable_paths())
+    # The protected set is a union of three sources, never just one (#369,
+    # #348). A user can pin a page the live template calls `dynamic`
+    # (roadmap.md and architecture.md are the common ones); before this the
+    # agent was simply told that page was its to rewrite, and rewrote it.
+    # Frontmatter is authoritative at runtime, exactly as INGEST.md's "Page
+    # kinds" section promises.
+    #
+    # Union, not replacement, so no page loses protection relative to the
+    # old behaviour. That matters because the three sources genuinely
+    # disagree today: `default_stable_paths()` reads the hardcoded
+    # DEFAULT_PAGES constant while `default_pages()` reads the admin-editable
+    # live config, so a page an admin re-kinded is stable in one and dynamic
+    # in the other. Reconciling those two is its own change; here we take the
+    # safe side of the disagreement.
+    protected_stable = sorted(
+        set(report_schema.default_stable_paths())
+        | {p.path for p in report_schema.default_pages() if p.kind == "stable"}
+        | set(report_schema.pinned_stable_paths(existing_pages or {}))
+    )
+    stable_paths = ", ".join(f"`{p}`" for p in protected_stable)
     if quick and not is_greenfield:
         mode_block = (
             "MODE: QUICK EDIT. The team asked for one targeted correction, not a full "
@@ -252,7 +269,14 @@ def _build_system_prompt(
     elif not is_greenfield:
         mode_block = (
             "MODE: INCREMENTAL. Apply the page-kind rules above against the existing pages. "
-            "Read every page first; rewrite dynamic/report pages, preserve stable/hidden."
+            "Read every page first; rewrite dynamic/report pages, preserve stable/hidden.\n\n"
+            f"HUMAN-OWNED, DO NOT REWRITE: {stable_paths}. This list is the union of the "
+            "template's stable pages and every page a human has pinned `kind: stable` on "
+            "disk — a pin can land on a page the template calls dynamic, and the pin wins. "
+            "Leave their bodies alone.\n\n"
+            "NEVER change an existing page's `kind` — it is a human setting, users flip it "
+            "in the UI, and the write API rejects agent kind changes outright, so an edit "
+            "that only rewrites `kind:` is discarded and must not be reported as a change."
         )
     elif seed_stable_pages:
         mode_block = (
@@ -446,6 +470,10 @@ async def stream_ingest(
     # ingest. Greenfield writes everything anyway, so skip the diff there.
     template_note = ""
     template_note_summary: str | None = None
+    # Also feeds the prompt's protected-stable set, so a user's on-disk
+    # `kind: stable` pin is honored even when the template calls the page
+    # dynamic (#369). Empty on greenfield: there is nothing pinned yet.
+    existing: dict[str, str] = {}
     if not is_greenfield:
         try:
             existing = (
@@ -492,6 +520,7 @@ async def stream_ingest(
         template_note=template_note,
         quick=quick,
         issue_context=issue_context,
+        existing_pages=existing,
     )
     if experiment is not None:
         manifest = "\n".join(
