@@ -119,12 +119,6 @@ export function isSynthesizedType(type: ProjectType | undefined): boolean {
   return type === "bhag" || type === "area";
 }
 
-/** Recurring Webex meetings can feed every Tome entity type. Legacy records
- * with no explicit type are regular projects and remain supported. */
-export function supportsWebexMeetingSeries(type: ProjectType | undefined): boolean {
-  return type === undefined || type === "project" || type === "area" || type === "bhag";
-}
-
 /**
  * Label dimensions for discovery + the executive dashboard. Free-form,
  * multi-value (except domain). `domain` is denormalized from the structural

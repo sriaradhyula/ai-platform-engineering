@@ -17,7 +17,6 @@ import {
   nonHostMeetingSeriesAllowed,
   webexMeetingSeriesDiscoveryWindow,
 } from "@/lib/tome/webex-meeting-series";
-import { supportsWebexMeetingSeries } from "@/types/projects";
 import type {
   AutoIngestConfig,
   ProjectDocument,
@@ -30,16 +29,6 @@ type Ctx = { params: Promise<{ slug: string }> };
 
 function mongoProjectId(projectId: string): string {
   return (ObjectId.isValid(projectId) ? new ObjectId(projectId) : projectId) as unknown as string;
-}
-
-function requireSupportedEntity(project: ProjectDocument): void {
-  if (!supportsWebexMeetingSeries(project.type)) {
-    throw new ApiError(
-      "Meeting-series ingestion is unavailable for this Tome entity type.",
-      400,
-      "MEETING_SERIES_PROJECT_REQUIRED",
-    );
-  }
 }
 
 function sessionName(session: unknown, fallback: string): string {
@@ -64,7 +53,6 @@ function requestSubscriptionCalendarRefresh(
 export const GET = withErrorHandler(async (request: NextRequest, context: Ctx) => {
   const { slug } = await context.params;
   const tctx = await loadTomeProject(request, slug);
-  requireSupportedEntity(tctx.project);
   const subscriptions = tctx.project.autoIngest?.webexMeetingSeries ?? [];
   const occurrences = await loadWebexMeetingOccurrenceHistory(
     tctx.projectId,
@@ -121,7 +109,6 @@ export const POST = withErrorHandler(async (request: NextRequest, context: Ctx) 
   const { slug } = await context.params;
   const tctx = await loadTomeProject(request, slug);
   requireTomeEditor(tctx);
-  requireSupportedEntity(tctx.project);
 
   const body = (await request.json().catch(() => null)) as { seriesKey?: unknown } | null;
   const seriesKey = typeof body?.seriesKey === "string" ? body.seriesKey.trim() : "";
@@ -200,7 +187,6 @@ export const PATCH = withErrorHandler(async (request: NextRequest, context: Ctx)
   const { slug } = await context.params;
   const tctx = await loadTomeProject(request, slug);
   requireTomeEditor(tctx);
-  requireSupportedEntity(tctx.project);
 
   const body = (await request.json().catch(() => null)) as {
     subscriptionId?: unknown;
@@ -242,7 +228,6 @@ export const DELETE = withErrorHandler(async (request: NextRequest, context: Ctx
   const { slug } = await context.params;
   const tctx = await loadTomeProject(request, slug);
   requireTomeEditor(tctx);
-  requireSupportedEntity(tctx.project);
 
   const subscriptionId = request.nextUrl.searchParams.get("subscriptionId")?.trim() ?? "";
   if (!subscriptionId) {

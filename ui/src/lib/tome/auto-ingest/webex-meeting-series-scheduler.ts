@@ -3,7 +3,6 @@ import { ObjectId, type Collection } from "mongodb";
 
 import { getCollection } from "@/lib/mongodb";
 import {
-  supportsWebexMeetingSeries,
   type ProjectDocument,
   type WebexMeetingSeriesSubscription,
 } from "@/types/projects";
@@ -644,7 +643,6 @@ function ownerSiteGroups(
 ): OwnerSiteGroup[] {
   const groups = new Map<string, OwnerSiteGroup>();
   for (const project of projects) {
-    if (!supportsWebexMeetingSeries(project.type)) continue;
     for (const subscription of project.autoIngest?.webexMeetingSeries ?? []) {
       if (!subscription.enabled) continue;
       const ownerSubject = subscription.credentialOwner.subject;
@@ -771,7 +769,6 @@ export async function tickWebexMeetingSeriesScheduler(
   }
 
   for (const project of projects) {
-    if (!supportsWebexMeetingSeries(project.type)) continue;
     const subscriptions = (project.autoIngest?.webexMeetingSeries ?? []).filter(
       (subscription) => subscription.enabled,
     );
