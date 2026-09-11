@@ -52,6 +52,76 @@ an explicit recording-access warning before allowing selection. Auto-ingest can
 process only occurrences whose recording and transcript Webex makes available
 to the connected user, such as cohosted or shared recordings.
 
+## One-Off Manual Recorded Meeting Ingest
+
+The ingest page at `/projects/<slug>/tome/ingest` also has a one-off recorded
+meeting picker. This is independent of recurring-series subscriptions and does
+not create a schedule.
+
+### Discovery and availability
+
+1. The browser requests
+   `GET /api/tome/projects/<slug>/webex-meetings?lookbackDays=<days>`.
+2. The BFF uses the signed-in user's built-in `webex` connection. The OAuth
+   token is never sent to the browser.
+3. The BFF queries recordings and meeting transcripts in parallel, merges them
+   by Webex meeting instance ID, and returns newest first.
+4. The picker defaults to the previous 3 days. The user may choose 3, 7, or 30
+   days; the API hard-caps the interactive lookup at 30 days.
+5. Summary and transcript badges are checked with bounded concurrency and
+   request deadlines so a stalled Webex call cannot leave the picker loading
+   forever.
+6. Transcript availability first checks the public transcript API. If that is
+   empty, the BFF verifies the exact User Hub recording stream and its
+   `transcriptURL`. This is why an accessible recording hosted by somebody
+   else can show **Transcript available**.
+
+The availability badge is a recent access probe, not cached transcript text.
+The actual transcript is fetched again when the user starts the ingest.
+
+### Submit-time transcript fetch
+
+The client sends only the selected meeting metadata and availability flags.
+The server reconstructs the allowed ingest item; it does not trust transcript
+text supplied by the browser.
+
+For every selection marked with an available transcript:
+
+1. The BFF uses the same signed-in user's built-in `webex` connection.
+2. It invokes the configured normal `webex_meetings` MCP endpoint directly.
+3. It calls the same `downloadMeetingTranscript` helper used by recurring
+   auto-ingest. That helper tries the public transcript endpoint, then the
+   authenticated User Hub shared/cohost fallback, and downloads the text.
+4. Public recording topics sometimes contain a Webex-generated suffix such as
+   `-20260909 1651-1`. The manual path removes that suffix for User Hub title
+   lookup only; the original title remains visible and is retained in the
+   ingest payload.
+5. The downloaded transcript is capped by
+   `TOME_WEBEX_TRANSCRIPT_MAX_CHARS` and embedded in the TOME request. The
+   agent consumes this inline transcript and does not call its older
+   public-only transcript tool.
+
+Up to three selected transcripts are fetched concurrently. A meeting that has
+only a summary badge is passed without inline transcript text, so the TOME
+agent may still request its summary through the compatibility Webex tools.
+
+If the picker reported a transcript but Webex no longer returns a downloadable
+body, the API returns
+`WEBEX_MEETING_TRANSCRIPT_UNAVAILABLE` before creating an ingest run. The
+user must refresh the list and try again. There is no automatic retry, recovery,
+or mutation of an earlier run.
+
+### Source scope
+
+- **Full ingest** with **Add context: recorded Webex meetings** keeps the normal
+  project ingest scope. TOME processes attached GitHub, Confluence, Webex-space,
+  and other sources and uses the selected meeting as additional context.
+- The dedicated **Ingest meeting** action on a regular project sends
+  `sourceScope: "webex_meetings"`, so only the selected meeting payload is
+  processed.
+- A one-off meeting selection is per-run. It is not saved as a recurring-series
+  subscription.
+
 ## Manual Actions and Safety Boundaries
 
 Neither **Sync now** nor **Retry** is an automatic migration or repair:
@@ -184,14 +254,16 @@ can reuse them and must not be collapsed into one result.
 
 ## Authentication and MCP Selection
 
-- MCP server ID: `webex_meetings`
-- Provider connection: `webex_meetings`
-- Forwarded header: `X-CAIPE-Provider-Token`
-- Interactive discovery uses the signed-in user's connection.
-- Background ingestion uses the connection owned by the user who added the
-  subscription.
+Both flows use MCP server ID `webex_meetings` and forward the bearer on
+`X-CAIPE-Provider-Token`, but they deliberately use different saved provider
+connections:
 
-The server ID and provider name are currently fixed in code. The direct MCP
+| Flow | Provider connection | Credential owner |
+|---|---|---|
+| One-off manual recorded-meeting picker and submit | `webex` | Current signed-in user |
+| Recurring-series discovery and background ingest | `webex_meetings` | User who added the subscription |
+
+The server ID and provider names are currently fixed in code. The direct MCP
 endpoint can be overridden with `TOME_WEBEX_MEETINGS_MCP_URL`. Using a
 differently named MCP server or provider requires a code change.
 
@@ -203,9 +275,12 @@ The current **Webex (Meetings)** OAuth connector requests:
 - `meeting:summaries_read`
 - `meeting:transcripts_read`
 
-No messaging or KMS scope is required by this feature. A user who connected
-before these meeting scopes were configured must reconnect the application so
-Webex issues a token containing the updated grants.
+The built-in **Webex** connection used by one-off ingest must likewise include
+the recording, transcript, and summary read grants. It may carry additional
+messaging scopes for other CAIPE features, but manual meeting ingest does not
+use them. No messaging or KMS scope is required by meeting ingest itself. A
+user who connected before these meeting scopes were configured must reconnect
+the relevant application so Webex issues a token containing the updated grants.
 
 ## HTTP API
 
@@ -222,6 +297,9 @@ occurrence, and run belong to the requested project.
 | `/api/tome/projects/<slug>/webex-meeting-series/sync` | `GET` | Read-only preview of missing historical occurrences. |
 | `/api/tome/projects/<slug>/webex-meeting-series/sync` | `POST` | Queue explicitly selected historical occurrence keys. |
 | `/api/tome/projects/<slug>/webex-meeting-series/retry` | `POST` | Replay one linked failed ingest as a new meeting-only run. |
+| `/api/tome/projects/<slug>/webex-meetings` | `GET` | Discover one-off historical recordings and probe summary/transcript availability; `lookbackDays` is capped at 30. |
+| `/api/tome/projects/<slug>/reingest` | `POST` | Prefetch selected one-off transcripts, then start a regular-project full or meeting-only ingest. |
+| `/api/tome/projects/<slug>/synthesize` | `POST` | Prefetch selected one-off transcripts before starting BHAG/Area synthesis. |
 
 Retry request:
 
@@ -329,7 +407,8 @@ kubectl -n <namespace> logs -f deploy/<release>-caipe-ui -c caipe-ui \
 ## Relevant Code
 
 - `../webex-meeting-series.ts`: MCP selection, credentials, discovery, identity,
-  host eligibility, occurrence resolution, and transcript download
+  host eligibility, occurrence resolution, transcript download, and one-off
+  manual transcript prefetch
 - `webex-meeting-series-scheduler.ts`: reconciliation, timing, retries, and run
   creation
 - `webex-meeting-series-backfill.ts`: read-only historical comparison and
@@ -347,8 +426,13 @@ kubectl -n <namespace> logs -f deploy/<release>-caipe-ui -c caipe-ui \
   discovery for Project Onboarding
 - `../../../components/tome/WebexMeetingSeriesSettings.tsx`: settings and
   selection, history, Sync now, and Retry UI
-- `../../../components/tome/IngestPanel.tsx`: dedicated meeting-only ingest
-  dispatch
+- `../../../components/tome/IngestPanel.tsx`: one-off recorded-meeting picker,
+  Full-ingest meeting context, and dedicated meeting-only dispatch
+- `../../../app/api/tome/projects/[slug]/webex-meetings/route.ts`: bounded
+  historical discovery and summary/transcript availability probes
+- `../../../app/api/tome/projects/[slug]/reingest/route.ts` and
+  `../../../app/api/tome/projects/[slug]/synthesize/route.ts`: submit-time
+  transcript prefetch before a run is created
 - `../../../components/projects/OnboardingWebexMeetingSeriesPicker.tsx`:
   onboarding search and multi-select UI
 - `../../../../../ai_platform_engineering/mcp/webex-meetings/`: Webex Meetings
