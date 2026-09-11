@@ -786,6 +786,27 @@ def stable_paths_in(pages: dict[str, str]) -> list[str]:
     return [p for p, k in kinds.items() if k in ("stable", "hidden")]
 
 
+def pinned_stable_paths(pages: dict[str, str]) -> list[str]:
+    """Paths whose frontmatter *explicitly* declares `kind: stable` (#369).
+
+    Distinct from `stable_paths_in`, which also folds in `hidden` and treats a
+    missing/unknown kind as stable. Here only an explicit declaration counts,
+    because this list feeds the ingest prompt's "human-owned, do NOT rewrite"
+    set: an explicit `kind: stable` is a recorded human decision (the UI
+    toggle writes exactly that), whereas a page that simply has no frontmatter
+    yet is not a pin and should not silently become unwritable.
+
+    Mirrors the server-side guard in `ui/src/lib/tome/page-kind-guard.ts`,
+    which likewise protects only an explicitly declared kind."""
+    out: list[str] = []
+    for path, md in pages.items():
+        fm, _ = parse_frontmatter(md)
+        raw = fm.get("kind")
+        if isinstance(raw, str) and raw.strip().lower() == "stable":
+            out.append(path)
+    return sorted(out)
+
+
 def _kind_from_md(md: str) -> str:
     fm, _ = parse_frontmatter(md)
     return str(fm.get("kind") or "stable").lower()

@@ -88,10 +88,22 @@ when a subtopic genuinely deserves its own page; a flat 5-page wiki beats a
 
 ### Page kinds
 
-Frontmatter `kind` is authoritative — trust it, not the page path. Users
-pin/flip kinds via the UI.
+Frontmatter `kind` is authoritative — trust it, not the page path and not the
+page template. Users pin/flip kinds via the UI; you never do. On an existing
+page, carry its `kind` through every edit unchanged. The write API enforces
+this and silently restores the stored value, so a "fix" that only rewrites
+`kind:` changes nothing — don't attempt it, and never report it as a change
+you made. You may set `kind` only on a page you are creating for the first
+time, from the template's declared kind.
 
-- `stable` — user-pinned. Preserve, do NOT rewrite.
+- `stable` — user-pinned, human-owned. Don't rewrite unless asked. On a
+  routine ingest nobody asked, so preserve them. Enforced, not advisory: the
+  write API discards an unasked-for edit to a stable page and the page stays
+  unchanged. Don't retry it under another path and don't claim the page was
+  updated — if the content is wrong, say so in your summary and leave it to a
+  person. You are "asked" only when this run carries a seed instruction naming
+  the correction (quick-edit mode), or when the team opted into stable-page
+  seeding at founding.
 - `dynamic` — agent-owned. Rewrite when its *meaning* changed; body only,
   preserve frontmatter.
 - `report` — special-rendered, refresh each ingest (see below).

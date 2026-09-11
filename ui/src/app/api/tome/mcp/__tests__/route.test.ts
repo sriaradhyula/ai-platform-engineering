@@ -467,4 +467,196 @@ describe("Tome MCP authentication challenge", () => {
       error: { code: -32700, message: "Parse error" },
     });
   });
+
+  it("returns an explicitly empty response for notifications", async () => {
+    mockGetAuthFromBearerOrSession.mockResolvedValue({
+      user: { email: "viewer@example.test" },
+      session: { principalType: "oidc_user", sub: "viewer-subject" },
+    });
+    const response = await POST(
+      new NextRequest("http://caipe-ui:3000/api/tome/mcp", {
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "notifications/initialized",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(202);
+    expect(response.headers.get("content-length")).toBe("0");
+    await expect(response.text()).resolves.toBe("");
+  });
+
+  it("sets an explicit byte boundary on JSON responses", async () => {
+    mockGetAuthFromBearerOrSession.mockResolvedValue({
+      user: { email: "viewer@example.test" },
+      session: { principalType: "oidc_user", sub: "viewer-subject" },
+    });
+    const response = await POST(
+      new NextRequest("http://caipe-ui:3000/api/tome/mcp", {
+        method: "POST",
+        body: JSON.stringify({ jsonrpc: "2.0", id: 12, method: "ping" }),
+      }),
+    );
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-length")).toBe(
+      String(Buffer.byteLength(body, "utf8")),
+    );
+  });
+
+  it("omits inline Base64 images from tool results", async () => {
+    mockGetAuthFromBearerOrSession.mockResolvedValue({
+      user: { email: "viewer@example.test" },
+      session: { principalType: "oidc_user", sub: "viewer-subject" },
+    });
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn().mockResolvedValue(
+      Response.json({
+        success: true,
+        data: {
+          path: "architecture.md",
+          markdown:
+            "Before ![diagram](data:image/png;base64,QUJDREVGRw==) after",
+        },
+      }),
+    );
+
+    try {
+      const response = await POST(
+        new NextRequest("http://caipe-ui:3000/api/tome/mcp", {
+          method: "POST",
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 13,
+            method: "tools/call",
+            params: {
+              name: "tome_get_page",
+              arguments: {
+                project_slug: "example-project",
+                page_path: "architecture.md",
+              },
+            },
+          }),
+        }),
+      );
+      const body = await response.json();
+      const text = body.result.content[0].text;
+
+      expect(text).toContain("tome-image://omitted");
+      expect(text).toContain("omitted 1 inline image");
+      expect(text).not.toContain("QUJDREVGRw==");
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it("returns a compact tool error when sanitized output exceeds the limit", async () => {
+    mockGetAuthFromBearerOrSession.mockResolvedValue({
+      user: { email: "viewer@example.test" },
+      session: { principalType: "oidc_user", sub: "viewer-subject" },
+    });
+    const originalFetch = global.fetch;
+    const originalLimit = process.env.TOME_MCP_MAX_TOOL_RESULT_BYTES;
+    process.env.TOME_MCP_MAX_TOOL_RESULT_BYTES = "1024";
+    global.fetch = jest.fn().mockResolvedValue(
+      Response.json({
+        success: true,
+        data: { path: "large.md", markdown: "x".repeat(2048) },
+      }),
+    );
+
+    try {
+      const response = await POST(
+        new NextRequest("http://caipe-ui:3000/api/tome/mcp", {
+          method: "POST",
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 14,
+            method: "tools/call",
+            params: {
+              name: "tome_get_page",
+              arguments: {
+                project_slug: "example-project",
+                page_path: "large.md",
+              },
+            },
+          }),
+        }),
+      );
+      const body = await response.json();
+
+      expect(body.result.isError).toBe(true);
+      expect(body.result.content[0].text).toContain("exceeds the 1024-byte");
+      expect(body.result.content[0].text).toContain("tome_list_pages");
+      expect(body.result.content[0].text.length).toBeLessThan(500);
+    } finally {
+      global.fetch = originalFetch;
+      if (originalLimit === undefined)
+        delete process.env.TOME_MCP_MAX_TOOL_RESULT_BYTES;
+      else process.env.TOME_MCP_MAX_TOOL_RESULT_BYTES = originalLimit;
+    }
+  });
+
+  it("fetches duplicate BHAG child page context only once", async () => {
+    mockGetAuthFromBearerOrSession.mockResolvedValue({
+      user: { email: "viewer@example.test" },
+      session: { principalType: "oidc_user", sub: "viewer-subject" },
+    });
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      let data: unknown;
+      if (url.endsWith("/api/projects/ioc")) {
+        data = { project: { slug: "ioc", title: "IoC", type: "bhag" } };
+      } else if (url.includes("type=area")) {
+        data = { projects: [{ slug: "core", title: "Core area" }] };
+      } else if (url.includes("initiative=ioc")) {
+        data = { projects: [{ slug: "shared", title: "Shared project" }] };
+      } else if (url.includes("/api/projects?area=core")) {
+        data = { projects: [{ slug: "shared", title: "Shared project" }] };
+      } else if (url.includes("/pages")) {
+        data = { pages: { "overview.md": "context" } };
+      } else {
+        throw new Error(`Unexpected URL: ${url}`);
+      }
+      return Response.json({ success: true, data });
+    });
+
+    try {
+      const response = await POST(
+        new NextRequest("http://caipe-ui:3000/api/tome/mcp", {
+          method: "POST",
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 15,
+            method: "tools/call",
+            params: {
+              name: "tome_get_bhag_synthesis_context",
+              arguments: { bhag_slug: "ioc" },
+            },
+          }),
+        }),
+      );
+      const body = await response.json();
+      const context = JSON.parse(body.result.content[0].text);
+      const calls = (global.fetch as jest.Mock).mock.calls.map(([url]) =>
+        String(url),
+      );
+
+      expect(calls.filter((url) => url.endsWith("/shared/pages"))).toHaveLength(1);
+      expect(context.children).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            slug: "shared",
+            pages_omitted: "Duplicate project context already included.",
+          }),
+        ]),
+      );
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
 });

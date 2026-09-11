@@ -327,6 +327,22 @@ def make_persist_hook(
                     "via chat. Tell the user their edit needs a data steward, or ask "
                     "them to make the change themselves."
                 )
+            elif exc.response.status_code == 409:
+                # Stable pages are human-owned; the ingest agent never edits
+                # them. Naming the rule (not just "rejected") keeps the agent
+                # from retrying the same write under a different shape, the
+                # way invisible drafts once made it retry one page under six
+                # filenames.
+                context = (
+                    f"Your edit to {rel} was NOT saved and the page is unchanged. "
+                    f"`{rel}` is a STABLE page — human-owned, rewritten only when a "
+                    "person asks, and nobody asked on this run. The page template's "
+                    "kind does not override that. Do not retry this write, do not try "
+                    "to reach the page by another path, and do NOT report it as "
+                    "updated in your summary. Move on to the dynamic/report pages. If "
+                    "the content genuinely needs to change, say so plainly in your "
+                    "summary and leave it to a person."
+                )
             else:
                 context = (
                     f"Your edit to {rel} was NOT saved — the backend rejected the "
