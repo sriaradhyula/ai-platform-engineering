@@ -25,6 +25,8 @@ include the per-agent bearer (`TTT_AGENT_TOKEN` env), validated by the
 backend's `/internal/...` auth dependency.
 """
 
+# ruff: noqa: E402 — tracing must be initialized before SDK-bound imports.
+
 from __future__ import annotations
 
 import asyncio
@@ -36,6 +38,13 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
+
+from tome_agent.tracing import flush_tracing, initialize_tracing, trace_context
+
+# Install the SDK wrapper before importing any Tome modules that bind
+# `claude_agent_sdk.query` locally. This keeps every existing SDK entry point
+# covered by the instrumentation.
+initialize_tracing()
 
 from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
 from fastapi import FastAPI, HTTPException, Response
@@ -103,6 +112,7 @@ metrics.uptime_seconds.set_function(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    initialize_tracing()
     if not os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("ANTHROPIC_AUTH_TOKEN"):
         raise RuntimeError(
             "At least one of ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN must be set"
@@ -133,6 +143,7 @@ async def lifespan(app: FastAPI):
             pass
         except Exception:
             log.warning("sync task shutdown error", exc_info=True)
+        flush_tracing()
 
 
 app = FastAPI(title="tome-agent", lifespan=lifespan)
@@ -457,16 +468,22 @@ async def chat_endpoint(body: ChatRequest):
         run_start = run_started()
         success = False
         try:
-            async for event in stream_chat(
-                user_message=body.message,
-                sdk_session_id=body.sdk_session_id,
+            with trace_context(
                 snapshot=body.snapshot,
-                stable_pages=body.stable_pages,
-                issue_context=body.issue_context,
                 actor_email=body.actor_email,
-                is_compact=body.is_compact,
+                session_id=body.sdk_session_id,
+                operation="chat",
             ):
-                yield _sse_format(event)
+                async for event in stream_chat(
+                    user_message=body.message,
+                    sdk_session_id=body.sdk_session_id,
+                    snapshot=body.snapshot,
+                    stable_pages=body.stable_pages,
+                    issue_context=body.issue_context,
+                    actor_email=body.actor_email,
+                    is_compact=body.is_compact,
+                ):
+                    yield _sse_format(event)
             success = True
         finally:
             _state.in_flight_runs = max(0, _state.in_flight_runs - 1)

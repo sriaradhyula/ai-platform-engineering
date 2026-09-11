@@ -34,6 +34,9 @@ and persistence. CAIPE Mongo is the system of record.
 | `TTT_AGENT_ROLE` | `editor` \| `viewer` |
 | `TTT_CHAT_MODEL` / `TTT_INGEST_MODEL` / `TTT_PRESENTATION_MODEL` | Deployment fallback model ids when no exact/type/global setting exists |
 | `ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` | Anthropic-style endpoint + key (a proxy may front Bedrock etc.) |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse project credentials; tracing is enabled when both are present |
+| `LANGFUSE_BASE_URL` | Langfuse server URL, e.g. `https://langfuse.example.com` |
+| `LANGFUSE_TRACING_ENABLED` | Optional kill switch; defaults to `true` when Langfuse credentials are configured |
 | `GITHUB_TOKEN` / `CONFLUENCE_TOKEN` / `WEBEX_TOKEN` | Read-only source tokens for the connector MCPs (optional) |
 
 The endpoint, models, and credentials are config-driven — nothing host- or
@@ -42,6 +45,21 @@ global, environment, then built-in fallback. `TTT_CHAT_MODEL` backs chat and
 is also the presentation fallback when `TTT_PRESENTATION_MODEL` is unset;
 `TTT_INGEST_MODEL` backs ingest, synthesis, and compaction;
 `TTT_PRESENTATION_MODEL` backs PowerPoint generation and revision.
+
+### Langfuse tracing
+
+Tome uses the Claude Agent SDK, and the optional OpenInference Claude Agent SDK
+instrumentation captures each agent run, Claude generation, and SDK tool call.
+It is initialized before the FastAPI service accepts requests, so all existing
+SDK entry points are covered without changing their prompts or tool policies.
+Tracing is fail-open: missing credentials or an initialization error is logged
+and does not prevent Tome from serving requests.
+
+For a self-hosted Langfuse deployment, set `LANGFUSE_BASE_URL` to the server
+URL and inject project credentials through the deployment secret. Do not put
+the keys in the image, repository, or a checked-in `.env` file. For short-lived
+processes, call `langfuse.flush()` after the final agent run; the HTTP service
+flushes queued spans during graceful shutdown.
 
 ## Experiment isolation
 
