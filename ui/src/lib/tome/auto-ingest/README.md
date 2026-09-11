@@ -260,12 +260,14 @@ connections:
 
 | Flow | Provider connection | Credential owner |
 |---|---|---|
-| One-off manual recorded-meeting picker and submit | `webex` | Current signed-in user |
+| One-off manual recorded-meeting picker and submit | `TOME_MANUAL_WEBEX_PROVIDER` (default `webex`) | Current signed-in user |
 | Recurring-series discovery and background ingest | `webex_meetings` | User who added the subscription |
 
-The server ID and provider names are currently fixed in code. The direct MCP
+The MCP server ID and recurring-series provider remain fixed. The one-off
+provider is configurable with `TOME_MANUAL_WEBEX_PROVIDER`, and the direct MCP
 endpoint can be overridden with `TOME_WEBEX_MEETINGS_MCP_URL`. Using a
-differently named MCP server or provider requires a code change.
+differently named MCP server or recurring-series provider requires a code
+change.
 
 The current **Webex (Meetings)** OAuth connector requests:
 
@@ -324,6 +326,7 @@ already claimed by another retry.
 | `TOME_WEBEX_TRANSCRIPT_MAX_RETRY_PERIOD_MS` | `7200000` | Maximum time after a meeting ends to retry resolving its public or User Hub occurrence and transcript. |
 | `TOME_WEBEX_TRANSCRIPT_MAX_CHARS` | `400000` | Maximum transcript characters passed to one ingest; minimum 50,000. |
 | `TOME_WEBEX_MEETINGS_MCP_URL` | unset | Optional direct endpoint override for the configured MCP server. |
+| `TOME_MANUAL_WEBEX_PROVIDER` | `webex` | Provider connection used consistently by the one-off meeting picker and submit-time transcript download. |
 
 The normal project auto-ingest toggle and CRON do not need to be enabled for a
 meeting-series subscription. The global `TOME_AUTO_INGEST_ENABLED` worker flag

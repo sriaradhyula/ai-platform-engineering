@@ -25,8 +25,22 @@ import type { WebexMeetingIngestItem } from "@/types/tome";
 
 const SERVER_ID = "webex_meetings";
 const PROVIDER = "webex_meetings";
-const MANUAL_PROVIDER = "webex";
 const MANUAL_TRANSCRIPT_CONCURRENCY = 3;
+
+/** Provider connection used by one-off recorded-meeting discovery and ingest. */
+export function manualWebexProvider(): string {
+  return process.env.TOME_MANUAL_WEBEX_PROVIDER?.trim() || "webex";
+}
+
+/** Resolve the configured one-off Webex connection without exposing it client-side. */
+export async function manualWebexAccessToken(
+  ownerSubject: string,
+): Promise<string | undefined> {
+  if (!ownerSubject) return undefined;
+  const provider = manualWebexProvider();
+  const credentials = await collectForwardedCredentials(ownerSubject, [provider]);
+  return credentials[provider]?.access_token;
+}
 
 export function meetingSeriesSlug(title: string, seriesKey: string): string {
   const titleSlug = title
@@ -350,8 +364,7 @@ export async function backgroundWebexMeetingInvoker(ownerSubject: string): Promi
  */
 async function manualWebexMeetingInvoker(ownerSubject: string): Promise<Invoke> {
   const server = await configuredServer();
-  const credentials = await collectForwardedCredentials(ownerSubject, [MANUAL_PROVIDER]);
-  const token = credentials[MANUAL_PROVIDER]?.access_token;
+  const token = await manualWebexAccessToken(ownerSubject);
   if (!token) {
     throw new ApiError(
       "Connect Webex before ingesting a recorded meeting.",

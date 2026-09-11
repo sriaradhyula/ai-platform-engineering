@@ -1,6 +1,7 @@
 import {
   attachAvailableWebexMeetingTranscripts,
   downloadMeetingTranscript,
+  manualWebexProvider,
   meetingSeriesMatches,
   meetingSeriesHostEligibility,
   meetingSeriesSlug,
@@ -25,6 +26,22 @@ jest.mock("@/lib/projects/onboarding-providers", () => ({
 
 describe("Webex recurring meeting discovery", () => {
   const now = new Date("2026-09-01T12:00:00Z");
+
+  it("defaults and configures the one-off manual Webex provider", () => {
+    const previous = process.env.TOME_MANUAL_WEBEX_PROVIDER;
+    try {
+      delete process.env.TOME_MANUAL_WEBEX_PROVIDER;
+      expect(manualWebexProvider()).toBe("webex");
+      process.env.TOME_MANUAL_WEBEX_PROVIDER = " custom_webex ";
+      expect(manualWebexProvider()).toBe("custom_webex");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.TOME_MANUAL_WEBEX_PROVIDER;
+      } else {
+        process.env.TOME_MANUAL_WEBEX_PROVIDER = previous;
+      }
+    }
+  });
 
   it("creates a stable wiki path segment", () => {
     expect(meetingSeriesSlug("Design Review (EMEA)", "series-1")).toBe("design-review-emea");

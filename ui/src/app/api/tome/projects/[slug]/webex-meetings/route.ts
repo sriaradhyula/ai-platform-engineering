@@ -20,7 +20,8 @@ import { NextRequest } from "next/server";
 
 import { successResponse, withErrorHandler } from "@/lib/api-middleware";
 import { loadTomeProject } from "@/lib/tome/tome-api";
-import { resolveForwardedCredentials } from "@/lib/tome/agent-proxy";
+import { sessionSub } from "@/lib/tome/agent-proxy";
+import { manualWebexAccessToken } from "@/lib/tome/webex-meeting-series";
 
 export const dynamic = "force-dynamic";
 
@@ -240,8 +241,7 @@ export const GET = withErrorHandler(async (request: NextRequest, ctx: Ctx) => {
       ? Math.min(requestedLookback, MAX_LOOKBACK_DAYS)
       : DEFAULT_LOOKBACK_DAYS;
 
-  const creds = await resolveForwardedCredentials(tctx);
-  const token = creds["webex"]?.access_token;
+  const token = await manualWebexAccessToken(sessionSub(tctx.session));
 
   if (!token) {
     return successResponse(debug ? { note: "no webex token", meetings: [] } : { meetings: [] });
