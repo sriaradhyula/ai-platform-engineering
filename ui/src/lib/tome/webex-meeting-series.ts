@@ -21,9 +21,12 @@ import type {
   WebexMeetingSeriesSourceRefs,
   WebexMeetingSeriesSubscription,
 } from "@/types/projects";
+import type { WebexMeetingIngestItem } from "@/types/tome";
 
 const SERVER_ID = "webex_meetings";
 const PROVIDER = "webex_meetings";
+const MANUAL_PROVIDER = "webex";
+const MANUAL_TRANSCRIPT_CONCURRENCY = 3;
 
 export function meetingSeriesSlug(title: string, seriesKey: string): string {
   const titleSlug = title
@@ -145,7 +148,13 @@ export function meetingSeriesHostEligibility(
   return { canAutoIngest: false, unavailableReason: HOST_REQUIRED_REASON };
 }
 
-type Invoke = (toolName: string, params: Record<string, unknown>) => Promise<unknown>;
+export type Invoke = (toolName: string, params: Record<string, unknown>) => Promise<unknown>;
+
+export interface ManualWebexMeetingSelection
+  extends Omit<WebexMeetingIngestItem, "transcript"> {
+  hasSummary?: boolean;
+  hasTranscript?: boolean;
+}
 
 /** FastMCP exposes each typed Webex request model as the `args` tool parameter. */
 export function webexMcpToolArguments(
@@ -313,6 +322,41 @@ export async function backgroundWebexMeetingInvoker(ownerSubject: string): Promi
       "The subscription owner must reconnect Webex (Meetings).",
       401,
       "WEBEX_MEETINGS_CONNECTION_REQUIRED",
+    );
+  }
+  return async (toolName, params) => {
+    const response = await invokeDirectHttpMcpTool({
+      endpoint: server.endpoint,
+      toolName,
+      params: webexMcpToolArguments(params),
+      headers: { "X-CAIPE-Provider-Token": token },
+      timeoutMs: toolName === "webex_list_transcripts" ? 75_000 : 30_000,
+    });
+    if (!response.ok) {
+      throw new ApiError(
+        `Webex Meetings MCP returned HTTP ${response.status}`,
+        502,
+        "WEBEX_MEETINGS_MCP_ERROR",
+      );
+    }
+    return readMcpToolJson(response.payload);
+  };
+}
+
+/**
+ * Invoke the normal Meetings MCP with the built-in Webex connection used by
+ * the recorded-meeting picker. The MCP endpoint is shared with recurring
+ * auto-ingest; only credential ownership differs.
+ */
+async function manualWebexMeetingInvoker(ownerSubject: string): Promise<Invoke> {
+  const server = await configuredServer();
+  const credentials = await collectForwardedCredentials(ownerSubject, [MANUAL_PROVIDER]);
+  const token = credentials[MANUAL_PROVIDER]?.access_token;
+  if (!token) {
+    throw new ApiError(
+      "Connect Webex before ingesting a recorded meeting.",
+      401,
+      "WEBEX_CONNECTION_REQUIRED",
     );
   }
   return async (toolName, params) => {
@@ -789,4 +833,86 @@ export async function downloadMeetingTranscript(
     listedCount: items.length,
     downloadedCount: segments.length,
   };
+}
+
+function manualMeetingIngestItem(
+  meeting: ManualWebexMeetingSelection,
+): WebexMeetingIngestItem {
+  return {
+    id: meeting.id,
+    title: meeting.title,
+    start: meeting.start,
+    ...(meeting.siteUrl ? { siteUrl: meeting.siteUrl } : {}),
+    ...(meeting.seriesKey ? { seriesKey: meeting.seriesKey } : {}),
+    ...(meeting.seriesSlug ? { seriesSlug: meeting.seriesSlug } : {}),
+    ...(meeting.seriesTitle ? { seriesTitle: meeting.seriesTitle } : {}),
+    ...(meeting.occurrenceKey ? { occurrenceKey: meeting.occurrenceKey } : {}),
+  };
+}
+
+function manualWebexRecordingLookupTitle(title: string): string {
+  return title.replace(/-\d{8}\s+\d{4}(?:-\d+)?$/, "");
+}
+
+/**
+ * Download transcripts that the picker already found and attach their text to
+ * the ingest contract. This is the same downloader used by recurring
+ * auto-ingest, including its non-host User Hub fallback.
+ */
+export async function attachAvailableWebexMeetingTranscripts(
+  invoke: Invoke,
+  meetings: ManualWebexMeetingSelection[],
+): Promise<WebexMeetingIngestItem[]> {
+  const results = meetings.map(manualMeetingIngestItem);
+  const indexes = meetings
+    .map((meeting, index) => (meeting.hasTranscript ? index : -1))
+    .filter((index) => index >= 0);
+  let next = 0;
+  const maxTranscriptChars = Math.max(
+    50_000,
+    Number(process.env.TOME_WEBEX_TRANSCRIPT_MAX_CHARS) || 400_000,
+  );
+
+  const workers = Array.from(
+    { length: Math.min(MANUAL_TRANSCRIPT_CONCURRENCY, indexes.length) },
+    async () => {
+      while (next < indexes.length) {
+        const index = indexes[next++];
+        const meeting = meetings[index];
+        const downloaded = await downloadMeetingTranscript(invoke, {
+          meetingId: meeting.id,
+          // Public /recordings topics can contain Webex's generated timestamp
+          // suffix. User Hub indexes the underlying meeting title instead.
+          title: manualWebexRecordingLookupTitle(meeting.title),
+          start: meeting.start,
+          siteUrl: meeting.siteUrl,
+        });
+        if (!downloaded?.transcript) {
+          throw new ApiError(
+            `The transcript for "${meeting.title}" is no longer available from Webex. Refresh the meeting list and try again.`,
+            422,
+            "WEBEX_MEETING_TRANSCRIPT_UNAVAILABLE",
+          );
+        }
+        results[index] = {
+          ...results[index],
+          transcript: downloaded.transcript.slice(0, maxTranscriptChars),
+        };
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+}
+
+/** Server-side preflight for meetings selected in the manual ingest UI. */
+export async function prefetchManualWebexMeetingTranscripts(
+  ownerSubject: string,
+  meetings: ManualWebexMeetingSelection[],
+): Promise<WebexMeetingIngestItem[]> {
+  if (!meetings.some((meeting) => meeting.hasTranscript)) {
+    return meetings.map(manualMeetingIngestItem);
+  }
+  const invoke = await manualWebexMeetingInvoker(ownerSubject);
+  return attachAvailableWebexMeetingTranscripts(invoke, meetings);
 }

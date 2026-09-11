@@ -21,6 +21,10 @@ import {
   isIngestRunning,
   IngestInProgressError,
 } from "@/lib/tome/ingest-runner";
+import {
+  prefetchManualWebexMeetingTranscripts,
+  type ManualWebexMeetingSelection,
+} from "@/lib/tome/webex-meeting-series";
 import type { ProjectDocument } from "@/types/projects";
 
 export const dynamic = "force-dynamic";
@@ -54,7 +58,7 @@ export const POST = withErrorHandler(async (request: NextRequest, ctx: Ctx) => {
     seedStablePages?: boolean;
     /** Re-ingest every child project first, then synthesize (a cascade). */
     refreshChildren?: boolean;
-    webexMeetings?: { id: string; title: string; start: string }[];
+    webexMeetings?: ManualWebexMeetingSelection[];
   };
 
   const childRefs =
@@ -110,10 +114,16 @@ export const POST = withErrorHandler(async (request: NextRequest, ctx: Ctx) => {
       if (await isIngestRunning(tctx.projectId)) {
         throw new IngestInProgressError();
       }
+      const webexMeetings = body.webexMeetings?.length
+        ? await prefetchManualWebexMeetingTranscripts(
+            tomeSessionSubject(tctx.session),
+            body.webexMeetings,
+          )
+        : undefined;
       const { parentRunId, cascadeId, childCount } = await enqueueBhagCascade(tctx, {
         seed: body.seed ?? null,
         seedStablePages: body.seedStablePages,
-        webexMeetings: body.webexMeetings,
+        webexMeetings,
       });
       auditTome({
         action: "tome.synthesize.trigger",
@@ -124,11 +134,17 @@ export const POST = withErrorHandler(async (request: NextRequest, ctx: Ctx) => {
       return successResponse({ runId: parentRunId, cascadeId, childCount });
     }
 
+    const webexMeetings = body.webexMeetings?.length
+      ? await prefetchManualWebexMeetingTranscripts(
+          tomeSessionSubject(tctx.session),
+          body.webexMeetings,
+        )
+      : undefined;
     const { runId } = await startIngestRun(tctx, {
       seed: body.seed ?? null,
       seedStablePages: body.seedStablePages,
       agentEndpoint: "/synthesize",
-      webexMeetings: body.webexMeetings,
+      webexMeetings,
     });
     auditTome({
       action: "tome.synthesize.trigger",
