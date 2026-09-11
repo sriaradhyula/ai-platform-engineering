@@ -26,6 +26,9 @@ export const dynamic = "force-dynamic";
 
 const PROTOCOL_VERSION = "2024-11-05";
 const SERVER_INFO = { name: "tome", version: "0.1.0" };
+const DEFAULT_MAX_TOOL_RESULT_BYTES = 1_000_000;
+const INLINE_IMAGE_DATA_URI =
+  /data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/_=-]+/gi;
 
 // --- JSON-RPC helpers -------------------------------------------------------
 
@@ -44,9 +47,76 @@ function rpcError(id: RpcRequest["id"], code: number, message: string) {
   return { jsonrpc: "2.0" as const, id: id ?? null, error: { code, message } };
 }
 
+function maxToolResultBytes(): number {
+  const configured = Number(process.env.TOME_MCP_MAX_TOOL_RESULT_BYTES);
+  return Number.isFinite(configured) && configured > 0
+    ? Math.floor(configured)
+    : DEFAULT_MAX_TOOL_RESULT_BYTES;
+}
+
+function byteCount(text: string): number {
+  return Buffer.byteLength(text, "utf8");
+}
+
+/** Keep binary page assets out of model context. The web UI remains the place
+ * to view those images; MCP callers receive the surrounding markdown. */
+function omitInlineImages(text: string): string {
+  let omittedImages = 0;
+  let omittedBytes = 0;
+  const sanitized = text.replace(INLINE_IMAGE_DATA_URI, (uri) => {
+    omittedImages += 1;
+    omittedBytes += byteCount(uri);
+    return "tome-image://omitted";
+  });
+  if (!omittedImages) return sanitized;
+  return (
+    `${sanitized}\n\n` +
+    `[Tome MCP omitted ${omittedImages} inline image${omittedImages === 1 ? "" : "s"} ` +
+    `(${omittedBytes} bytes of Base64 data). Open the page in Tome to view ` +
+    `the diagram${omittedImages === 1 ? "" : "s"}.]`
+  );
+}
+
 /** A tool result is a single text block (optionally flagged as an error). */
 function toolText(text: string, isError = false) {
-  return { content: [{ type: "text", text }], ...(isError ? { isError: true } : {}) };
+  return {
+    content: [{ type: "text", text: omitInlineImages(text) }],
+    ...(isError ? { isError: true } : {}),
+  };
+}
+
+function boundToolResult(
+  toolName: string,
+  result: ReturnType<typeof toolText>,
+): ReturnType<typeof toolText> {
+  const bytes = result.content.reduce(
+    (total, block) => total + byteCount(block.text),
+    0,
+  );
+  const limit = maxToolResultBytes();
+  if (bytes <= limit) return result;
+
+  return toolText(
+    `${toolName} produced ${bytes} bytes after inline images were omitted, ` +
+      `which exceeds the ${limit}-byte MCP response limit. Narrow the request: ` +
+      `use tome_list_pages followed by tome_get_page for the specific pages ` +
+      `you need.`,
+    true,
+  );
+}
+
+/** Emit a finite JSON response with an explicit byte boundary. Some MCP
+ * harnesses keep HTTP connections alive, so EOF is not a reliable delimiter. */
+function finiteJsonResponse(payload: unknown, status = 200): NextResponse {
+  const body = JSON.stringify(payload);
+  return new NextResponse(body, {
+    status,
+    headers: {
+      "Cache-Control": "no-store",
+      "Content-Length": String(byteCount(body)),
+      "Content-Type": "application/json; charset=utf-8",
+    },
+  });
 }
 
 // --- internal route forwarding ----------------------------------------------
@@ -206,6 +276,13 @@ interface ToolDef {
     fwd: Forward,
     args: Record<string, any>,
   ) => Promise<ReturnType<typeof toolText>>;
+}
+
+interface SynthesisProject {
+  slug: string;
+  title?: string;
+  name?: string;
+  status?: unknown;
 }
 
 const STR = { type: "string" } as const;
@@ -455,8 +532,8 @@ const TOOLS: ToolDef[] = [
           "list skip-level projects",
         ),
       ]);
-      const areas = (areaData?.projects ?? []) as any[];
-      const skipProjects = (skipData?.projects ?? []) as any[];
+      const areas = (areaData?.projects ?? []) as SynthesisProject[];
+      const skipProjects = (skipData?.projects ?? []) as SynthesisProject[];
 
       const fetchPages = async (s: string) => {
         try {
@@ -471,6 +548,24 @@ const TOOLS: ToolDef[] = [
       };
 
       const bhagPages = await fetchPages(b.slug);
+      const pageContextsSeen = new Set<string>([String(b.slug)]);
+      const projectContext = async (
+        project: SynthesisProject,
+        kind: "area" | "project",
+      ) => {
+        const projectSlug = String(project.slug);
+        const duplicate = pageContextsSeen.has(projectSlug);
+        pageContextsSeen.add(projectSlug);
+        return {
+          slug: project.slug,
+          name: project.title ?? project.name,
+          status: project.status,
+          kind,
+          ...(duplicate
+            ? { pages_omitted: "Duplicate project context already included." }
+            : { pages: await fetchPages(projectSlug) }),
+        };
+      };
       const childContext = [];
       for (const area of areas) {
         // Fetch Area's own pages and its child projects
@@ -478,34 +573,18 @@ const TOOLS: ToolDef[] = [
           await fwd("GET", `/api/projects?area=${encodeURIComponent(area.slug)}`),
           "list area projects",
         );
-        const areaProjects = (areaChildData?.projects ?? []) as any[];
+        const areaProjects = (areaChildData?.projects ?? []) as SynthesisProject[];
         const areaProjectContext = [];
         for (const ap of areaProjects) {
-          areaProjectContext.push({
-            slug: ap.slug,
-            name: ap.title ?? ap.name,
-            status: ap.status,
-            kind: "project",
-            pages: await fetchPages(ap.slug),
-          });
+          areaProjectContext.push(await projectContext(ap, "project"));
         }
         childContext.push({
-          slug: area.slug,
-          name: area.title ?? area.name,
-          status: area.status,
-          kind: "area",
-          pages: await fetchPages(area.slug),
+          ...(await projectContext(area, "area")),
           child_projects: areaProjectContext,
         });
       }
       for (const c of skipProjects) {
-        childContext.push({
-          slug: c.slug,
-          name: c.title ?? c.name,
-          status: c.status,
-          kind: "project",
-          pages: await fetchPages(c.slug),
-        });
+        childContext.push(await projectContext(c, "project"));
       }
       return toolText(
         JSON.stringify(
@@ -1366,7 +1445,7 @@ async function dispatch(request: NextRequest, rpc: RpcRequest, fwd: Forward) {
       if (!tool) return rpcError(rpc.id, -32602, `Unknown tool: ${name}`);
       try {
         const result = await tool.handler(request, fwd, args);
-        return rpcResult(rpc.id, result);
+        return rpcResult(rpc.id, boundToolResult(name, result));
       } catch (e) {
         // Tool-level failures are reported as a tool result with isError, not a
         // protocol error, so the model can read and react to the message.
@@ -1426,7 +1505,7 @@ export async function POST(request: NextRequest) {
   try {
     payload = await request.json();
   } catch {
-    return NextResponse.json(rpcError(null, -32700, "Parse error"), { status: 400 });
+    return finiteJsonResponse(rpcError(null, -32700, "Parse error"), 400);
   }
 
   const fwd = makeForward(request);
@@ -1447,6 +1526,11 @@ export async function POST(request: NextRequest) {
     if (!isNotification) responses.push(res);
   }
 
-  if (!responses.length) return new NextResponse(null, { status: 202 });
-  return NextResponse.json(isBatch ? responses : responses[0]);
+  if (!responses.length) {
+    return new NextResponse(null, {
+      status: 202,
+      headers: { "Cache-Control": "no-store", "Content-Length": "0" },
+    });
+  }
+  return finiteJsonResponse(isBatch ? responses : responses[0]);
 }

@@ -699,6 +699,14 @@ then log a request ID, a truncated SHA-256 token fingerprint, JWT `alg`, `kid`,
 error codes. The bearer token, signature, subject, email, and request body are
 never logged. Disable the setting after troubleshooting to reduce log volume.
 
+MCP tool results omit inline `data:image/...;base64` payloads while preserving
+the surrounding Markdown. Results larger than 1,000,000 UTF-8 bytes after that
+sanitization return a compact tool error directing the client to
+`tome_list_pages` and `tome_get_page`. Override the limit with
+`TOME_MCP_MAX_TOOL_RESULT_BYTES` when needed. JSON responses include an
+explicit content length, and notification-only requests return a bodyless
+`202 Accepted`, so clients do not have to use connection EOF as a delimiter.
+
 For existing deployments, the old `TOME_MCP_CIRCUIT_JWKS_URI`,
 `TOME_MCP_CIRCUIT_ISSUER`, and `TOME_MCP_CIRCUIT_AUDIENCES` names remain
 supported as deprecated aliases. The `TOME_MCP_SECONDARY_OIDC_*` names take
