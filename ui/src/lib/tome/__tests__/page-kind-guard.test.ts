@@ -6,6 +6,7 @@
  */
 
 import {
+  blocksStableBodyEdit,
   explicitKind,
   preserveStoredKind,
   withKind,
@@ -204,5 +205,91 @@ describe("preserveStoredKind", () => {
       expect(explicitKind(stored)).toBe("stable");
     }
     expect(stored).toContain("Body from run 9.");
+  });
+});
+
+describe("blocksStableBodyEdit", () => {
+  const STABLE = "---\ntitle: Charter\nkind: stable\n---\n# Charter\n\nOur problem statement.\n";
+
+  it("blocks a body change to a page pinned stable", () => {
+    // The production case: a page pinned `kind: stable` at 12:09:41 had a new
+    // section appended by the ingest agent at 12:18:00 the same day.
+    const incoming = STABLE.replace(
+      "Our problem statement.",
+      "Our problem statement.\n\n**Milestone 7:** appended by the agent.",
+    );
+    expect(blocksStableBodyEdit(STABLE, incoming)).toBe(true);
+  });
+
+  it("blocks a wholesale rewrite", () => {
+    expect(blocksStableBodyEdit(STABLE, "---\nkind: stable\n---\n# Charter\n\nRewritten.\n")).toBe(
+      true,
+    );
+  });
+
+  it("blocks a body deletion", () => {
+    expect(blocksStableBodyEdit(STABLE, "---\nkind: stable\n---\n")).toBe(true);
+  });
+
+  it("allows a frontmatter-only write on a stable page", () => {
+    // The code-owned template-binding stamp rewrites frontmatter on pages it
+    // never touches the text of. Blocking that breaks every ingest.
+    const stamped = STABLE.replace(
+      "kind: stable",
+      "kind: stable\ntemplate_scope: top-level\ntemplate_path: charter.md\ntemplate_version: 10",
+    );
+    expect(blocksStableBodyEdit(STABLE, stamped)).toBe(false);
+  });
+
+  it("tolerates trailing-whitespace-only differences", () => {
+    expect(blocksStableBodyEdit(STABLE, STABLE.trimEnd())).toBe(false);
+    expect(blocksStableBodyEdit(STABLE, `${STABLE}\n\n`)).toBe(false);
+  });
+
+  it("allows an identical write", () => {
+    expect(blocksStableBodyEdit(STABLE, STABLE)).toBe(false);
+  });
+
+  it("does not block dynamic, report, or hidden pages", () => {
+    for (const kind of ["dynamic", "report", "hidden"] as const) {
+      const stored = `---\nkind: ${kind}\n---\n# P\n\nOld.\n`;
+      const incoming = `---\nkind: ${kind}\n---\n# P\n\nNew.\n`;
+      expect(blocksStableBodyEdit(stored, incoming)).toBe(false);
+    }
+  });
+
+  it("does not block a page the agent is creating", () => {
+    expect(blocksStableBodyEdit(null, "---\nkind: stable\n---\n# New\n")).toBe(false);
+    expect(blocksStableBodyEdit(undefined, "# New\n")).toBe(false);
+  });
+
+  it("does not block a stored page with no declared kind", () => {
+    // Narrower than `isStableWrite`'s draft-gating rule on purpose: resolving
+    // an absent kind to "stable" would lock the agent out of the glossary
+    // terms, decision records and meeting notes it creates itself.
+    expect(blocksStableBodyEdit("# Glossary term\n\nOld.\n", "# Glossary term\n\nNew.\n")).toBe(
+      false,
+    );
+    expect(
+      blocksStableBodyEdit("---\ntitle: T\n---\nOld.\n", "---\ntitle: T\n---\nNew.\n"),
+    ).toBe(false);
+  });
+
+  it("does not block on an unrecognized stored kind", () => {
+    expect(blocksStableBodyEdit("---\nkind: sideways\n---\nOld.\n", "---\nkind: sideways\n---\nNew.\n")).toBe(
+      false,
+    );
+  });
+
+  it("sees through an agent trying to relabel the page in the same write", () => {
+    // The kind guard runs first and restores `kind: stable`, so by the time
+    // this runs the incoming markdown is labelled stable again. Verify the
+    // combination rather than trusting the ordering by inspection.
+    const sneaky = STABLE.replace("kind: stable", "kind: dynamic").replace(
+      "Our problem statement.",
+      "Rewritten wholesale.",
+    );
+    const afterKindGuard = preserveStoredKind(STABLE, sneaky).markdown;
+    expect(blocksStableBodyEdit(STABLE, afterKindGuard)).toBe(true);
   });
 });

@@ -77,6 +77,39 @@ export function withKind(markdown: string, kind: PageKind): string {
   return FENCE + lines.join("\n") + rest;
 }
 
+/**
+ * Whether an autonomous (ingest) write must be refused because it would
+ * change the *body* of a page a human owns (#369 follow-up).
+ *
+ * "Stable pages are never edited by the agent" is the definition of the kind,
+ * but nothing enforced it: `deletion_block_reason` protects stable pages from
+ * deletion and there was no equivalent for edits. Production shows the gap
+ * being hit — a page pinned `kind: stable` at 12:09:41 had a new section
+ * appended by the ingest agent at 12:18:00 the same day, and that text is
+ * still on the page.
+ *
+ * Only an explicit stored `kind: stable` blocks. Deliberately narrower than
+ * `isStableWrite`'s draft-gating rule, which resolves an absent kind through
+ * the template spec and finally to "stable" — applying that here would treat
+ * every agent-created page without frontmatter (glossary terms, decision
+ * records, meeting notes) as human-owned and lock the agent out of its own
+ * work. `hidden` is excluded for the opposite reason: it is agent-only
+ * working memory that the agent is expected to append to.
+ *
+ * Bodies are compared ignoring trailing whitespace, so a stray newline is not
+ * a "change", and frontmatter is excluded entirely — the code-owned template
+ * binding stamp rewrites frontmatter on pages it never touches the text of.
+ */
+export function blocksStableBodyEdit(
+  stored: string | null | undefined,
+  incoming: string,
+): boolean {
+  if (explicitKind(stored) !== "stable") return false;
+  const [, storedBody] = parseFrontmatter(stored as string);
+  const [, incomingBody] = parseFrontmatter(incoming);
+  return storedBody.trimEnd() !== incomingBody.trimEnd();
+}
+
 export interface KindGuardResult {
   /** The markdown to persist — `incoming`, or `incoming` with `kind` restored. */
   markdown: string;

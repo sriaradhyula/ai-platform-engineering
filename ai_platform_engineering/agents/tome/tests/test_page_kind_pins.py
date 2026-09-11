@@ -224,3 +224,71 @@ class TestProtectedStableSetInPrompt:
 
         assert "`charter.md`" in protected
         assert "`activity.md`" not in protected
+
+
+class TestPersistHookRejectionFeedback:
+    """A refused write must tell the agent *why*, not just "rejected".
+
+    An opaque failure is what made the agent retry one page under six
+    different filenames when its writes were being silently drafted. The
+    409 branch names the rule and forbids both the retry and the false
+    "updated" claim in the run summary.
+    """
+
+    @staticmethod
+    def _hook_context(status_code: int, tmp_path) -> str:
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+
+        import httpx
+
+        from tome_agent.agent.loop import make_persist_hook
+
+        page = tmp_path / "charter.md"
+        page.write_text("---\nkind: stable\n---\n# Charter\n")
+        response = httpx.Response(
+            status_code,
+            request=httpx.Request("POST", "http://backend/pages"),
+            text="refused",
+        )
+        error = httpx.HTTPStatusError("refused", request=response.request, response=response)
+
+        hook = make_persist_hook(
+            author="tome-agent-ingest",
+            report_id=None,
+            project_dir=tmp_path,
+            project_id="proj-1",
+        )
+        with patch(
+            "tome_agent.agent.loop.http_client.write_page",
+            new=AsyncMock(side_effect=error),
+        ):
+            out = asyncio.new_event_loop().run_until_complete(
+                hook(
+                    {"tool_name": "Edit", "tool_input": {"file_path": str(page)}},
+                    "tool-use-1",
+                    None,
+                )
+            )
+        return out["hookSpecificOutput"]["additionalContext"]
+
+    def test_409_names_the_stable_rule_and_forbids_retry(self, tmp_path) -> None:
+        context = self._hook_context(409, tmp_path)
+
+        assert "was NOT saved" in context
+        assert "STABLE page" in context
+        assert "Do not retry" in context
+        assert "another path" in context
+        assert "do NOT report it as updated" in context
+
+    def test_other_failures_keep_the_generic_message(self, tmp_path) -> None:
+        context = self._hook_context(500, tmp_path)
+
+        assert "was NOT saved" in context
+        assert "STABLE page" not in context
+
+    def test_403_still_explains_the_data_steward_rule(self, tmp_path) -> None:
+        context = self._hook_context(403, tmp_path)
+
+        assert "data steward" in context
+        assert "STABLE page" not in context
