@@ -1,5 +1,7 @@
 import {
+  attachAvailableWebexMeetingTranscripts,
   downloadMeetingTranscript,
+  manualWebexProvider,
   meetingSeriesMatches,
   meetingSeriesHostEligibility,
   meetingSeriesSlug,
@@ -24,6 +26,22 @@ jest.mock("@/lib/projects/onboarding-providers", () => ({
 
 describe("Webex recurring meeting discovery", () => {
   const now = new Date("2026-09-01T12:00:00Z");
+
+  it("defaults and configures the one-off manual Webex provider", () => {
+    const previous = process.env.TOME_MANUAL_WEBEX_PROVIDER;
+    try {
+      delete process.env.TOME_MANUAL_WEBEX_PROVIDER;
+      expect(manualWebexProvider()).toBe("webex");
+      process.env.TOME_MANUAL_WEBEX_PROVIDER = " custom_webex ";
+      expect(manualWebexProvider()).toBe("custom_webex");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.TOME_MANUAL_WEBEX_PROVIDER;
+      } else {
+        process.env.TOME_MANUAL_WEBEX_PROVIDER = previous;
+      }
+    }
+  });
 
   it("creates a stable wiki path segment", () => {
     expect(meetingSeriesSlug("Design Review (EMEA)", "series-1")).toBe("design-review-emea");
@@ -476,6 +494,72 @@ describe("Webex recurring meeting discovery", () => {
       max_results: 100,
       download: true,
       download_format: "txt",
+    });
+  });
+
+  it("attaches picker-confirmed transcripts inline for manual ingest", async () => {
+    const invoke = jest.fn().mockResolvedValue({
+      items: [{ id: "transcript-1", meetingId: "meeting-1", body: "Shared transcript" }],
+    });
+
+    await expect(
+      attachAvailableWebexMeetingTranscripts(invoke, [
+        {
+          id: "meeting-1",
+          title: "Tome at Outshift-20260909 1651-1",
+          start: "2026-09-02T10:00:00Z",
+          siteUrl: "https://primary.webex.com",
+          hasTranscript: true,
+          hasSummary: false,
+        },
+        {
+          id: "meeting-2",
+          title: "Summary only",
+          start: "2026-09-02T11:00:00Z",
+          hasTranscript: false,
+          hasSummary: true,
+        },
+      ]),
+    ).resolves.toEqual([
+      {
+        id: "meeting-1",
+        title: "Tome at Outshift-20260909 1651-1",
+        start: "2026-09-02T10:00:00Z",
+        siteUrl: "https://primary.webex.com",
+        transcript: "Shared transcript",
+      },
+      {
+        id: "meeting-2",
+        title: "Summary only",
+        start: "2026-09-02T11:00:00Z",
+      },
+    ]);
+    expect(invoke).toHaveBeenCalledWith("webex_list_transcripts", {
+      meeting_id: "meeting-1",
+      meeting_title: "Tome at Outshift",
+      meeting_start: "2026-09-02T10:00:00Z",
+      site_url: "https://primary.webex.com",
+      max_results: 100,
+      download: true,
+      download_format: "txt",
+    });
+  });
+
+  it("rejects a manual ingest when a picker-confirmed transcript disappears", async () => {
+    const invoke = jest.fn().mockResolvedValue({ items: [] });
+
+    await expect(
+      attachAvailableWebexMeetingTranscripts(invoke, [
+        {
+          id: "meeting-1",
+          title: "Shared meeting",
+          start: "2026-09-02T10:00:00Z",
+          hasTranscript: true,
+        },
+      ]),
+    ).rejects.toMatchObject({
+      code: "WEBEX_MEETING_TRANSCRIPT_UNAVAILABLE",
+      statusCode: 422,
     });
   });
 

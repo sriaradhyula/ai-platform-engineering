@@ -57,6 +57,7 @@ interface WebexMeeting {
   id: string;
   title: string;
   start: string;
+  siteUrl?: string;
   hasSummary: boolean;
   hasTranscript: boolean;
 }
@@ -410,6 +411,7 @@ export function IngestPanel({
   const [meetingsLoading, setMeetingsLoading] = useState(false);
   const [selectedMeetings, setSelectedMeetings] = useState<Set<string>>(new Set());
   const [meetingFilter, setMeetingFilter] = useState("");
+  const [meetingLookbackDays, setMeetingLookbackDays] = useState(3);
 
   // ── Load runs ──────────────────────────────────────────────────────────────
 
@@ -463,20 +465,25 @@ export function IngestPanel({
 
   // ── Meetings ───────────────────────────────────────────────────────────────
 
-  const loadMeetings = useCallback(async () => {
-    if (meetings !== null) return;
-    setMeetingsLoading(true);
-    try {
-      const res = await fetch(`/api/tome/projects/${slug}/webex-meetings`);
-      if (!res.ok) throw new Error(`fetch failed (${res.status})`);
-      const json = await res.json();
-      setMeetings(json?.data?.meetings ?? []);
-    } catch {
-      setMeetings([]);
-    } finally {
-      setMeetingsLoading(false);
-    }
-  }, [slug, meetings]);
+  const loadMeetings = useCallback(
+    async (lookbackDays = meetingLookbackDays, force = false) => {
+      if (!force && (meetings !== null || meetingsLoading)) return;
+      setMeetingsLoading(true);
+      try {
+        const res = await fetch(
+          `/api/tome/projects/${slug}/webex-meetings?lookbackDays=${lookbackDays}`,
+        );
+        if (!res.ok) throw new Error(`fetch failed (${res.status})`);
+        const json = await res.json();
+        setMeetings(json?.data?.meetings ?? []);
+      } catch {
+        setMeetings([]);
+      } finally {
+        setMeetingsLoading(false);
+      }
+    },
+    [slug, meetings, meetingsLoading, meetingLookbackDays],
+  );
 
   const toggleMeetingsOpen = useCallback(() => {
     setMeetingsOpen((prev) => {
@@ -998,17 +1005,34 @@ export function IngestPanel({
                         Webex only exposes meetings you hosted or that have a transcript you can
                         access; meetings hosted by others may not appear.
                       </p>
-                      {/* Filter — disabled until meetings load, like the source picker. */}
-                      <div className="relative mb-2">
-                        <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                        <input
-                          type="text"
-                          placeholder="Filter meetings…"
-                          value={meetingFilter}
-                          onChange={(e) => setMeetingFilter(e.target.value)}
-                          disabled={meetingsLoading || !meetings || meetings.length === 0}
-                          className="w-full rounded-md border bg-background py-1.5 pl-8 pr-3 text-sm outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
-                        />
+                      <div className="mb-2 flex gap-2">
+                        <div className="relative min-w-0 flex-1">
+                          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                          <input
+                            type="text"
+                            placeholder="Filter meetings…"
+                            value={meetingFilter}
+                            onChange={(e) => setMeetingFilter(e.target.value)}
+                            disabled={meetingsLoading || !meetings || meetings.length === 0}
+                            className="w-full rounded-md border bg-background py-1.5 pl-8 pr-3 text-sm outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
+                          />
+                        </div>
+                        <select
+                          aria-label="Meeting history range"
+                          value={meetingLookbackDays}
+                          disabled={meetingsLoading}
+                          onChange={(e) => {
+                            const days = Number(e.target.value);
+                            setMeetingLookbackDays(days);
+                            setMeetings(null);
+                            void loadMeetings(days, true);
+                          }}
+                          className="rounded-md border bg-background px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
+                        >
+                          <option value={3}>Last 3 days</option>
+                          <option value={7}>Last 7 days</option>
+                          <option value={30}>Last 30 days</option>
+                        </select>
                       </div>
 
                       {/* Fixed-height scroll region so a long history doesn't blow out
