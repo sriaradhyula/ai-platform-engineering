@@ -320,11 +320,13 @@ export interface WebexMeetingIngestItem {
   id: string;
   title: string;
   start: string;
+  /** Webex site used by the non-host User Hub transcript fallback. */
+  siteUrl?: string;
   seriesKey?: string;
   seriesSlug?: string;
   seriesTitle?: string;
   occurrenceKey?: string;
-  /** Pre-fetched by the scheduler through the normal webex_meetings MCP. */
+  /** Pre-fetched server-side through the normal webex_meetings MCP. */
   transcript?: string;
 }
 
