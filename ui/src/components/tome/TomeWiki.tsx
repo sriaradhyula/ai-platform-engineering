@@ -1832,6 +1832,7 @@ export function TomeWiki({ slug }: { slug: string }) {
                   canEdit={canEdit}
                   onReverted={load}
                   onOpenRun={(runId) => navigate({ kind: "ingestRun", runId })}
+                  onReviewDraft={(runId) => navigate({ kind: "draftReview", runId })}
                 />
               </div>
             ) : (

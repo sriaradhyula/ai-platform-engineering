@@ -987,7 +987,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "tome_get_page_history",
     description:
-      "List a wiki page's revision history (newest first) — author, message, timestamp, whether it came from an ingest run (`report_id`), and whether it reverted a prior revision. Use the returned revision `id` with `tome_revert_page` to roll back. `project_slug` and `page_path` are required.",
+      "Get a wiki page's revision history (newest first), including the explicit `current_revision_id` and each revision's live, draft, or rejected status. Use a returned revision `id` with `tome_revert_page`, or use a report-less draft with `tome_resolve_page_draft`. `project_slug` and `page_path` are required.",
     inputSchema: schema({ project_slug: STR, page_path: STR }, ["project_slug", "page_path"]),
     handler: async (_req, fwd, args) => {
       const slug = encodeURIComponent(String(args.project_slug));
@@ -997,7 +997,46 @@ const TOOLS: ToolDef[] = [
         await fwd("GET", `/api/tome/projects/${slug}/history/${encodedPath}`),
         "get page history",
       );
-      return toolText(JSON.stringify(data?.revisions ?? [], null, 2));
+      return toolText(JSON.stringify({
+        path: data?.path ?? pagePath,
+        current_revision_id: data?.current_revision_id ?? null,
+        revisions: data?.revisions ?? [],
+      }, null, 2));
+    },
+  },
+  {
+    name: "tome_resolve_page_draft",
+    description:
+      "Publish or reject one report-less legacy page draft. First call `tome_get_page_history`, then pass its exact `current_revision_id` as `base_revision_id` (or null when no live revision exists); a stale publish fails with a conflict. Report-backed drafts must use `tome_approve_ingest_draft` or `tome_reject_ingest_draft`. Requires editor access. `project_slug`, `revision_id`, `action`, and `base_revision_id` are required.",
+    inputSchema: schema(
+      {
+        project_slug: STR,
+        revision_id: STR,
+        action: { type: "string", enum: ["publish", "reject"] },
+        base_revision_id: {
+          anyOf: [{ type: "string" }, { type: "null" }],
+          description: "The current_revision_id returned by tome_get_page_history, or null.",
+        },
+      },
+      ["project_slug", "revision_id", "action", "base_revision_id"],
+    ),
+    handler: async (_req, fwd, args) => {
+      if (!Object.prototype.hasOwnProperty.call(args, "base_revision_id")) {
+        throw new Error(
+          "base_revision_id is required; get it from tome_get_page_history",
+        );
+      }
+      const slug = encodeURIComponent(String(args.project_slug));
+      const revisionId = encodeURIComponent(String(args.revision_id));
+      const data = ensureOk(
+        await fwd("POST", `/api/tome/projects/${slug}/revisions/${revisionId}/resolve`, {
+          action: String(args.action),
+          base_revision_id:
+            args.base_revision_id === null ? null : String(args.base_revision_id),
+        }),
+        "resolve page draft",
+      );
+      return toolText(JSON.stringify(data, null, 2));
     },
   },
   {

@@ -149,6 +149,53 @@ export class MongoPageStore implements PageStore {
     );
   }
 
+  async resolveOrphanDraft(
+    projectId: string,
+    revisionId: string,
+    resolution: "publish" | "reject",
+    reviewedBy: string,
+  ): Promise<PageRevision | null> {
+    const col = await getTomePageRevisionsCollection();
+    const idFilter = ObjectId.isValid(revisionId)
+      ? (new ObjectId(revisionId) as unknown as string)
+      : revisionId;
+    const now = new Date();
+
+    // Publishing restamps the revision as the newest live write while retaining
+    // its original timestamp. The content remains unchanged, and the status
+    // transition is atomic so two reviewers cannot resolve the same draft.
+    const update = resolution === "publish"
+      ? [{
+          $set: {
+            status: "live",
+            draft_created_at: "$created_at",
+            created_at: now,
+            reviewed_at: now,
+            reviewed_by: reviewedBy,
+            review_outcome: "published",
+          },
+        }]
+      : [{
+          $set: {
+            status: "rejected",
+            reviewed_at: now,
+            reviewed_by: reviewedBy,
+            review_outcome: "rejected",
+          },
+        }];
+
+    return col.findOneAndUpdate(
+      {
+        _id: idFilter,
+        project_id: projectId,
+        status: "draft",
+        $or: [{ report_id: { $exists: false } }, { report_id: null }],
+      },
+      update,
+      { returnDocument: "after" },
+    );
+  }
+
   async listDraftPaths(projectId: string, reportId: string): Promise<string[]> {
     const col = await getTomePageRevisionsCollection();
     const rows = await col

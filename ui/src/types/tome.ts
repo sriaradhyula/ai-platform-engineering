@@ -98,6 +98,12 @@ export interface PageRevision {
    * revisions written before this field existed.
    */
   status?: "live" | "draft" | "rejected";
+  /** Original creation time retained when a legacy draft is published. */
+  draft_created_at?: Date;
+  /** Review resolution metadata for report-less legacy drafts. */
+  reviewed_at?: Date;
+  reviewed_by?: string;
+  review_outcome?: "published" | "rejected";
   /** Set when this write restored a prior revision's body — the _id of that revision. */
   reverted_from?: string;
   created_at: Date;
