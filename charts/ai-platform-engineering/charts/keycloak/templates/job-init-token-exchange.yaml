@@ -53,8 +53,9 @@ spec:
               value: {{ .Values.realm.sslRequired | quote }}
             {{- /* Public CLI client (caipe-cli / forge-cli) — reconciled
                    imperatively by init-token-exchange.sh so it lands on
-                   existing realms during upgrade even when idp.enabled=false
-                   (this job is always-on; job-init-idp is not). */}}
+                   existing realms during upgrade when token exchange is
+                   enabled; user-profile upgrades are handled by their own
+                   unconditional reconciliation Job. */}}
             - name: KEYCLOAK_CLI_CLIENT_ID
               value: {{ (.Values.cliClient).clientId | default "caipe-cli" | quote }}
             {{- with (.Values.cliClient).accessTokenLifespan }}

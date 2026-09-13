@@ -81,7 +81,7 @@ describe("Tome MCP authentication challenge", () => {
     expect(response.status).toBe(401);
   });
 
-  it("allows an interactive OIDC principal to list tools", async () => {
+  it("allows a linked secondary OIDC principal to list all tools", async () => {
     mockGetAuthFromBearerOrSession.mockResolvedValue({
       user: { email: "viewer@example.test" },
       session: { principalType: "oidc_user", sub: "viewer-subject" },
@@ -100,12 +100,89 @@ describe("Tome MCP authentication challenge", () => {
     expect(body.result.tools).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: "tome_list_projects" }),
-        expect.objectContaining({ name: "tome_get_auto_ingest" }),
+        expect.objectContaining({ name: "tome_edit_page" }),
         expect.objectContaining({ name: "tome_create_project" }),
         expect.objectContaining({ name: "tome_update_gist" }),
         expect.objectContaining({ name: "tome_resolve_page_draft" }),
       ]),
     );
+  });
+
+  it("exposes only server info before a secondary identity is linked", async () => {
+    mockGetAuthFromBearerOrSession.mockResolvedValue({
+      user: { email: "new-user@example.test" },
+      session: { principalType: "secondary_oidc_unlinked" },
+    });
+    const response = await POST(
+      new NextRequest("http://caipe-ui:3000/api/tome/mcp", {
+        method: "POST",
+        headers: { authorization: "Bearer redacted" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 8, method: "tools/list" }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.result.tools).toEqual([
+      expect.objectContaining({ name: "tome_server_info" }),
+    ]);
+  });
+
+  it("allows an unlinked secondary identity to call server info", async () => {
+    mockGetAuthFromBearerOrSession.mockResolvedValue({
+      user: { email: "new-user@example.test" },
+      session: { principalType: "secondary_oidc_unlinked" },
+    });
+    const response = await POST(
+      new NextRequest("http://caipe-ui:3000/api/tome/mcp", {
+        method: "POST",
+        headers: { authorization: "Bearer redacted" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 9,
+          method: "tools/call",
+          params: { name: "tome_server_info", arguments: {} },
+        }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.result.isError).toBeUndefined();
+    expect(body.result.content[0].text).toContain('"name": "tome"');
+  });
+
+  it("blocks project tools before a secondary identity is linked", async () => {
+    mockGetAuthFromBearerOrSession.mockResolvedValue({
+      user: { email: "new-user@example.test" },
+      session: { principalType: "secondary_oidc_unlinked" },
+    });
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn();
+
+    try {
+      const response = await POST(
+        new NextRequest("http://caipe-ui:3000/api/tome/mcp", {
+          method: "POST",
+          headers: { authorization: "Bearer redacted" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 10,
+            method: "tools/call",
+            params: { name: "tome_list_projects", arguments: {} },
+          }),
+        }),
+      );
+      const body = await response.json();
+
+      expect(body.result).toMatchObject({ isError: true });
+      expect(body.result.content[0].text).toContain(
+        "Sign in to the CAIPE portal once",
+      );
+      expect(global.fetch).not.toHaveBeenCalled();
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 
   it("allows a user-owned TOME API-key principal to list tools", async () => {
@@ -130,6 +207,8 @@ describe("Tome MCP authentication challenge", () => {
     expect(body.result.tools).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ name: "tome_list_projects" }),
+        expect.objectContaining({ name: "tome_create_project" }),
+        expect.objectContaining({ name: "tome_update_gist" }),
       ]),
     );
   });

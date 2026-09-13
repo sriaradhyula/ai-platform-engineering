@@ -6,43 +6,41 @@ import {
 } from "jose";
 
 import type { JWTIdentity } from "@/lib/jwt-validation";
+import { linkSecondaryOidcIdentity } from "@/lib/auth/secondary-identity-link";
 
 /**
  * Server-only proof used after a secondary OIDC token has been validated.
  * The proof binds internal forwarding to the exact bearer token without
  * forwarding a provider-specific credential to downstream routes.
  */
-export const TOME_MCP_OIDC_PROOF_HEADER = "x-tome-mcp-oidc-proof";
+export const SECONDARY_OIDC_PROOF_HEADER = "x-caipe-secondary-oidc-proof";
 
-const SECONDARY_OIDC_JWKS_URI = "TOME_MCP_SECONDARY_OIDC_JWKS_URI";
-const SECONDARY_OIDC_ISSUER = "TOME_MCP_SECONDARY_OIDC_ISSUER";
-const SECONDARY_OIDC_AUDIENCES = "TOME_MCP_SECONDARY_OIDC_AUDIENCES";
-
-// Deprecated aliases retained so existing deployments can migrate without a
-// flag day. New installations should use the provider-neutral names above.
-const LEGACY_JWKS_URI = "TOME_MCP_CIRCUIT_JWKS_URI";
-const LEGACY_ISSUER = "TOME_MCP_CIRCUIT_ISSUER";
-const LEGACY_AUDIENCES = "TOME_MCP_CIRCUIT_AUDIENCES";
+const SECONDARY_OIDC_JWKS_URI = "CAIPE_SECONDARY_OIDC_JWKS_URI";
+const SECONDARY_OIDC_ISSUER = "CAIPE_SECONDARY_OIDC_ISSUER";
+const SECONDARY_OIDC_AUDIENCES = "CAIPE_SECONDARY_OIDC_AUDIENCES";
+const SECONDARY_OIDC_PROVIDER_ID = "CAIPE_SECONDARY_OIDC_PROVIDER_ID";
+const PROVIDER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 interface SecondaryOidcConfig {
   audiences: string[];
   issuer: string;
   jwksUri: string;
+  providerId: string;
 }
 
-interface TomeOidcSession {
+interface SecondaryOidcSession {
   accessToken: string;
   authMethod: "bearer";
   org?: string;
   principalType: "oidc_user";
   role: "user";
   sub?: string;
-  tomeOidcProof: string;
+  secondaryOidcProof: string;
   user: { email: string; name: string };
 }
 
-export interface TomeOidcAuthResult {
-  session: TomeOidcSession;
+export interface SecondaryOidcAuthResult {
+  session: SecondaryOidcSession;
   user: { email: string; name: string; role: string };
 }
 
@@ -55,22 +53,17 @@ function csv(value: string | undefined): string[] {
     .filter(Boolean);
 }
 
-function envValue(primary: string, legacy: string): string {
-  return process.env[primary]?.trim() || process.env[legacy]?.trim() || "";
-}
-
 function getSecondaryOidcConfig(): SecondaryOidcConfig | null {
-  const jwksUri = envValue(SECONDARY_OIDC_JWKS_URI, LEGACY_JWKS_URI);
-  const issuer = envValue(SECONDARY_OIDC_ISSUER, LEGACY_ISSUER);
-  const audiences = csv(
-    process.env[SECONDARY_OIDC_AUDIENCES] || process.env[LEGACY_AUDIENCES],
-  );
-  const configured = Boolean(jwksUri || issuer || audiences.length);
+  const jwksUri = process.env[SECONDARY_OIDC_JWKS_URI]?.trim() || "";
+  const issuer = process.env[SECONDARY_OIDC_ISSUER]?.trim() || "";
+  const audiences = csv(process.env[SECONDARY_OIDC_AUDIENCES]);
+  const providerId = process.env[SECONDARY_OIDC_PROVIDER_ID]?.trim() || "";
+  const configured = Boolean(jwksUri || issuer || audiences.length || providerId);
 
   if (!configured) return null;
-  if (!jwksUri || !issuer || audiences.length === 0) {
+  if (!jwksUri || !issuer || audiences.length === 0 || !providerId) {
     throw new Error(
-      `${SECONDARY_OIDC_JWKS_URI}, ${SECONDARY_OIDC_ISSUER}, and ${SECONDARY_OIDC_AUDIENCES} must all be configured`,
+      `${SECONDARY_OIDC_JWKS_URI}, ${SECONDARY_OIDC_ISSUER}, ${SECONDARY_OIDC_AUDIENCES}, and ${SECONDARY_OIDC_PROVIDER_ID} must all be configured`,
     );
   }
 
@@ -78,11 +71,20 @@ function getSecondaryOidcConfig(): SecondaryOidcConfig | null {
   if (parsed.protocol !== "https:") {
     throw new Error(`${SECONDARY_OIDC_JWKS_URI} must use HTTPS`);
   }
+  const parsedIssuer = new URL(issuer);
+  if (parsedIssuer.protocol !== "https:") {
+    throw new Error(`${SECONDARY_OIDC_ISSUER} must use HTTPS`);
+  }
+  if (!PROVIDER_ID_PATTERN.test(providerId)) {
+    throw new Error(
+      `${SECONDARY_OIDC_PROVIDER_ID} must be a 1-64 character provider identifier`,
+    );
+  }
 
-  return { audiences, issuer, jwksUri };
+  return { audiences, issuer, jwksUri, providerId };
 }
 
-export function isTomeSecondaryOidcConfigured(): boolean {
+export function isSecondaryOidcConfigured(): boolean {
   return getSecondaryOidcConfig() !== null;
 }
 
@@ -125,10 +127,10 @@ function identityFromPayload(payload: JWTPayload): JWTIdentity {
 }
 
 /** Validate a secondary OIDC JWT locally against cached remote JWKS keys. */
-export async function validateTomeSecondaryOidcJWT(token: string): Promise<JWTIdentity> {
+export async function validateSecondaryOidcJWT(token: string): Promise<JWTIdentity> {
   const config = getSecondaryOidcConfig();
   if (!config) {
-    throw new Error("TOME secondary OIDC JWT validation is not configured");
+    throw new Error("CAIPE secondary OIDC JWT validation is not configured");
   }
 
   const { payload } = await jwtVerify(token, getJWKS(config), {
@@ -136,27 +138,43 @@ export async function validateTomeSecondaryOidcJWT(token: string): Promise<JWTId
     audience: config.audiences,
     requiredClaims: ["iss", "aud", "exp"],
   });
-  return identityFromPayload(payload);
+  if (typeof payload.iss !== "string" || typeof payload.sub !== "string") {
+    throw new Error("The secondary OIDC token must contain issuer and subject claims");
+  }
+  return linkSecondaryOidcIdentity({
+    providerId: config.providerId,
+    issuer: payload.iss,
+    externalSub: payload.sub,
+    email: typeof payload.email === "string" ? payload.email : undefined,
+    emailVerified:
+      typeof payload.email_verified === "boolean"
+        ? payload.email_verified
+        : undefined,
+    identity: identityFromPayload(payload),
+  });
 }
 
 function internalProofSecret(): string {
-  const secret = process.env.TOME_MCP_INTERNAL_AUTH_SECRET || process.env.NEXTAUTH_SECRET;
+  const secret = process.env.NEXTAUTH_SECRET;
   if (!secret?.trim()) {
-    throw new Error("TOME_MCP_INTERNAL_AUTH_SECRET or NEXTAUTH_SECRET is required");
+    throw new Error("NEXTAUTH_SECRET is required for secondary OIDC forwarding");
   }
   return secret;
 }
 
 function proofForToken(token: string): string {
-  return createHmac("sha256", internalProofSecret()).update(token).digest("base64url");
+  return createHmac("sha256", internalProofSecret())
+    .update("caipe-secondary-oidc-proof\0", "utf8")
+    .update(token, "utf8")
+    .digest("base64url");
 }
 
-export function createTomeOidcProof(token: string): string {
+export function createSecondaryOidcProof(token: string): string {
   return proofForToken(token);
 }
 
 /** Verify the proof before accepting a secondary OIDC token internally. */
-export function isValidTomeOidcProof(token: string, proof: string | null): boolean {
+export function isValidSecondaryOidcProof(token: string, proof: string | null): boolean {
   if (!proof) return false;
   try {
     const expected = Buffer.from(proofForToken(token));
@@ -167,10 +185,10 @@ export function isValidTomeOidcProof(token: string, proof: string | null): boole
   }
 }
 
-export function buildTomeOidcAuth(
+export function buildSecondaryOidcAuth(
   token: string,
   identity: JWTIdentity,
-): TomeOidcAuthResult {
+): SecondaryOidcAuthResult {
   const user = { email: identity.email, name: identity.name, role: "user" };
   return {
     user,
@@ -181,12 +199,12 @@ export function buildTomeOidcAuth(
       org: identity.org,
       principalType: "oidc_user",
       authMethod: "bearer",
-      tomeOidcProof: createTomeOidcProof(token),
+      secondaryOidcProof: createSecondaryOidcProof(token),
       user: { email: identity.email, name: identity.name },
     },
   };
 }
 
-export function resetTomeSecondaryOidcJWTCache(): void {
+export function resetSecondaryOidcJWTCache(): void {
   jwksCache.clear();
 }

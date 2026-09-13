@@ -17,8 +17,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { getTomeAuthFromBearerOrSession } from "@/lib/tome/auth";
-import { TOME_MCP_OIDC_PROOF_HEADER } from "@/lib/tome/oidc-jwt";
+import { getMcpAuthFromBearerOrSession } from "@/lib/auth/mcp-auth";
+import { SECONDARY_OIDC_PROOF_HEADER } from "@/lib/auth/secondary-oidc";
 import { requireInteractiveTomePrincipal } from "@/lib/tome/principal";
 import { isTomeServerEnabled } from "@/lib/tome/guard";
 
@@ -155,11 +155,11 @@ function forwardHeaders(request: NextRequest): Record<string, string> {
   const auth = request.headers.get("Authorization");
   const cookie = request.headers.get("cookie");
   const tomeApiKey = request.headers.get("x-caipe-token");
-  const oidcProof = request.headers.get(TOME_MCP_OIDC_PROOF_HEADER);
+  const oidcProof = request.headers.get(SECONDARY_OIDC_PROOF_HEADER);
   if (auth) h.Authorization = auth;
   if (cookie) h.cookie = cookie;
   if (tomeApiKey) h["X-Caipe-Token"] = tomeApiKey;
-  if (oidcProof) h[TOME_MCP_OIDC_PROOF_HEADER] = oidcProof;
+  if (oidcProof) h[SECONDARY_OIDC_PROOF_HEADER] = oidcProof;
   return h;
 }
 
@@ -373,6 +373,24 @@ function autoIngestView(project: any): Record<string, unknown> {
 }
 
 const TOOLS: ToolDef[] = [
+  {
+    name: "tome_server_info",
+    description:
+      "Show the TOME MCP server name and version. If this is the only available tool, sign in to the CAIPE portal once with the same corporate email, then reconnect so your Circuit identity can be linked.",
+    inputSchema: schema({}),
+    handler: async () =>
+      toolText(
+        JSON.stringify(
+          {
+            ...SERVER_INFO,
+            identity_linking:
+              "A CAIPE profile is required before project tools become available.",
+          },
+          null,
+          2,
+        ),
+      ),
+  },
   {
     name: "tome_list_projects",
     description:
@@ -1458,6 +1476,7 @@ const TOOLS: ToolDef[] = [
 ];
 
 const TOOLS_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
+const UNLINKED_SECONDARY_OIDC_TOOL = "tome_server_info";
 
 /** Shared tool registry for the REST connector facade. The facade exposes the
  * same operations as ordinary OpenAPI-described HTTP endpoints, while this
@@ -1472,7 +1491,12 @@ export function getTomeMcpTool(name: string): ToolDef | undefined {
 
 // --- JSON-RPC dispatch ------------------------------------------------------
 
-async function dispatch(request: NextRequest, rpc: RpcRequest, fwd: Forward) {
+async function dispatch(
+  request: NextRequest,
+  rpc: RpcRequest,
+  fwd: Forward,
+  unlinkedSecondaryOidc: boolean,
+) {
   switch (rpc.method) {
     case "initialize": {
       const requested = (rpc.params?.protocolVersion as string) || PROTOCOL_VERSION;
@@ -1486,7 +1510,11 @@ async function dispatch(request: NextRequest, rpc: RpcRequest, fwd: Forward) {
       return rpcResult(rpc.id, {});
     case "tools/list":
       return rpcResult(rpc.id, {
-        tools: TOOLS.map((t) => ({
+        tools: TOOLS.filter(
+          (tool) =>
+            !unlinkedSecondaryOidc ||
+            tool.name === UNLINKED_SECONDARY_OIDC_TOOL,
+        ).map((t) => ({
           name: t.name,
           description: t.description,
           inputSchema: t.inputSchema,
@@ -1497,6 +1525,18 @@ async function dispatch(request: NextRequest, rpc: RpcRequest, fwd: Forward) {
       const args = (rpc.params?.arguments as Record<string, any>) ?? {};
       const tool = TOOLS_BY_NAME.get(name);
       if (!tool) return rpcError(rpc.id, -32602, `Unknown tool: ${name}`);
+      if (
+        unlinkedSecondaryOidc &&
+        tool.name !== UNLINKED_SECONDARY_OIDC_TOOL
+      ) {
+        return rpcResult(
+          rpc.id,
+          toolText(
+            "Sign in to the CAIPE portal once with the same corporate email, then reconnect to use project tools.",
+            true,
+          ),
+        );
+      }
       try {
         const result = await tool.handler(request, fwd, args);
         return rpcResult(rpc.id, boundToolResult(name, result));
@@ -1520,11 +1560,19 @@ export async function POST(request: NextRequest) {
 
   // Authenticate the transport. This supports a session cookie, a Keycloak
   // bearer JWT, or a user-minted Tome API key.
+  let unlinkedSecondaryOidc = false;
   try {
-    const { session } = await getTomeAuthFromBearerOrSession(request);
+    const { session } = await getMcpAuthFromBearerOrSession(request, {
+      allowUnlinkedSecondaryIdentity: true,
+    });
     requireInteractiveTomePrincipal(session);
-    if ("tomeOidcProof" in session && session.tomeOidcProof) {
-      request.headers.set(TOME_MCP_OIDC_PROOF_HEADER, session.tomeOidcProof);
+    unlinkedSecondaryOidc =
+      session.principalType === "secondary_oidc_unlinked";
+    if ("secondaryOidcProof" in session && session.secondaryOidcProof) {
+      request.headers.set(
+        SECONDARY_OIDC_PROOF_HEADER,
+        session.secondaryOidcProof,
+      );
     }
   } catch {
     // Point clients at our RFC 9728 metadata so they can discover the
@@ -1576,7 +1624,7 @@ export async function POST(request: NextRequest) {
     }
     // Notifications (no id, e.g. notifications/initialized) get no response.
     const isNotification = rpc.id === undefined || rpc.id === null;
-    const res = await dispatch(request, rpc, fwd);
+    const res = await dispatch(request, rpc, fwd, unlinkedSecondaryOidc);
     if (!isNotification) responses.push(res);
   }
 

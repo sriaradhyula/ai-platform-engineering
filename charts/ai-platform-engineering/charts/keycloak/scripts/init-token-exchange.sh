@@ -122,58 +122,51 @@ curl -sf -X PUT -H "${AUTH}" -H "Content-Type: application/json" \
   echo "${TAG}   WARNING: could not update ${REALM} realm."
 
 # ------------------------------------------------------------------
-# 2. Configure user profile: unmanagedAttributePolicy + slack_user_id
+# 2. Configure user profile: external identity-link attributes
 # ------------------------------------------------------------------
 echo "${TAG} Configuring user profile ..."
+ensure_profile_attribute() {
+  ATTR_NAME="$1"
+  DISPLAY_NAME="$2"
+  PROFILE=$(curl -sf -H "${AUTH}" "${KC_URL}/admin/realms/${REALM}/users/profile" 2>/dev/null || echo "{}")
+  if echo "${PROFILE}" | grep -q "\"${ATTR_NAME}\""; then
+    echo "${TAG}   ${ATTR_NAME} already declared in user profile."
+    return
+  fi
+
+  echo "${TAG}   Adding ${ATTR_NAME} to user profile ..."
+  # Attribute names and display labels below are static literals. The capture
+  # group is explicitly closed for compatibility with BusyBox sed.
+  ATTRIBUTE_JSON="{\"name\":\"${ATTR_NAME}\",\"displayName\":\"${DISPLAY_NAME}\",\"validations\":{},\"annotations\":{},\"permissions\":{\"view\":[\"admin\"],\"edit\":[\"admin\"]},\"multivalued\":false}"
+  if echo "${PROFILE}" | grep -q '"attributes"[[:space:]]*:[[:space:]]*\[[[:space:]]*\]'; then
+    UPDATED_PROFILE=$(echo "${PROFILE}" | sed "s/\\(\"attributes\"[[:space:]]*:[[:space:]]*\\[\\)[[:space:]]*\\]/\\1${ATTRIBUTE_JSON}]/")
+  else
+    UPDATED_PROFILE=$(echo "${PROFILE}" | sed "s/\\(\"attributes\"[[:space:]]*:[[:space:]]*\\[\\)/\\1${ATTRIBUTE_JSON},/")
+  fi
+  if echo "${UPDATED_PROFILE}" | grep -q '"unmanagedAttributePolicy"'; then
+    UPDATED_PROFILE=$(echo "${UPDATED_PROFILE}" | sed 's/"unmanagedAttributePolicy"[[:space:]]*:[[:space:]]*"[^"]*"/"unmanagedAttributePolicy":"ADMIN_EDIT"/')
+  else
+    UPDATED_PROFILE=$(echo "${UPDATED_PROFILE}" | sed 's/}$/,"unmanagedAttributePolicy":"ADMIN_EDIT"}/')
+  fi
+  curl -sf -X PUT -H "${AUTH}" -H "Content-Type: application/json" \
+    "${KC_URL}/admin/realms/${REALM}/users/profile" \
+    -d "${UPDATED_PROFILE}" 2>/dev/null && \
+    echo "${TAG}   User profile updated (${ATTR_NAME} + ADMIN_EDIT)." || \
+    echo "${TAG}   WARNING: could not update user profile for ${ATTR_NAME}."
+}
+
+ensure_profile_attribute "slack_user_id" "Slack User ID"
+ensure_profile_attribute "webex_user_id" "Webex User ID"
+ensure_profile_attribute "caipe_secondary_oidc_identity_key" "CAIPE Secondary OIDC Identity Key"
+ensure_profile_attribute "caipe_secondary_oidc_provider_id" "CAIPE Secondary OIDC Provider ID"
+ensure_profile_attribute "caipe_secondary_oidc_issuer" "CAIPE Secondary OIDC Issuer"
+ensure_profile_attribute "caipe_secondary_oidc_sub" "CAIPE Secondary OIDC Subject"
+ensure_profile_attribute "caipe_secondary_oidc_email" "CAIPE Secondary OIDC Email"
+ensure_profile_attribute "caipe_secondary_oidc_linked_at" "CAIPE Secondary OIDC Linked At"
+
 PROFILE=$(curl -sf -H "${AUTH}" "${KC_URL}/admin/realms/${REALM}/users/profile" 2>/dev/null || echo "{}")
 
-# Check if slack_user_id is already declared
-if echo "${PROFILE}" | grep -q '"slack_user_id"'; then
-  echo "${TAG}   slack_user_id already declared in user profile."
-else
-  echo "${TAG}   Adding slack_user_id to user profile ..."
-  # Use sed to inject the attribute and set unmanagedAttributePolicy
-  # We rebuild the profile JSON to add slack_user_id and set the policy
-  # NB: capture group must be explicitly closed with `\)` for busybox sed
-  # (alpine/curl). GNU sed auto-closes at the end of the pattern; busybox
-  # does not, and aborts with "bad regex: Missing ')'". Closing the group
-  # right after `\[` matches the same text and works in both GNU + busybox.
-  UPDATED_PROFILE=$(echo "${PROFILE}" | sed 's/\("attributes"[[:space:]]*:[[:space:]]*\[\)/\1{"name":"slack_user_id","displayName":"Slack User ID","validations":{},"annotations":{},"permissions":{"view":["admin"],"edit":["admin"]},"multivalued":false},/')
-
-  # Set unmanagedAttributePolicy
-  if echo "${UPDATED_PROFILE}" | grep -q '"unmanagedAttributePolicy"'; then
-    UPDATED_PROFILE=$(echo "${UPDATED_PROFILE}" | sed 's/"unmanagedAttributePolicy"[[:space:]]*:[[:space:]]*"[^"]*"/"unmanagedAttributePolicy":"ADMIN_EDIT"/')
-  else
-    # Append before closing brace
-    UPDATED_PROFILE=$(echo "${UPDATED_PROFILE}" | sed 's/}$/,"unmanagedAttributePolicy":"ADMIN_EDIT"}/')
-  fi
-
-  curl -sf -X PUT -H "${AUTH}" -H "Content-Type: application/json" \
-    "${KC_URL}/admin/realms/${REALM}/users/profile" \
-    -d "${UPDATED_PROFILE}" 2>/dev/null && \
-    echo "${TAG}   User profile updated (slack_user_id + ADMIN_EDIT)." || \
-    echo "${TAG}   WARNING: could not update user profile."
-  PROFILE=$(curl -sf -H "${AUTH}" "${KC_URL}/admin/realms/${REALM}/users/profile" 2>/dev/null || echo "{}")
-fi
-
-if echo "${PROFILE}" | grep -q '"webex_user_id"'; then
-  echo "${TAG}   webex_user_id already declared in user profile."
-else
-  echo "${TAG}   Adding webex_user_id to user profile ..."
-  UPDATED_PROFILE=$(echo "${PROFILE}" | sed 's/\("attributes"[[:space:]]*:[[:space:]]*\[\)/\1{"name":"webex_user_id","displayName":"Webex User ID","validations":{},"annotations":{},"permissions":{"view":["admin"],"edit":["admin"]},"multivalued":false},/')
-  if echo "${UPDATED_PROFILE}" | grep -q '"unmanagedAttributePolicy"'; then
-    UPDATED_PROFILE=$(echo "${UPDATED_PROFILE}" | sed 's/"unmanagedAttributePolicy"[[:space:]]*:[[:space:]]*"[^"]*"/"unmanagedAttributePolicy":"ADMIN_EDIT"/')
-  else
-    UPDATED_PROFILE=$(echo "${UPDATED_PROFILE}" | sed 's/}$/,"unmanagedAttributePolicy":"ADMIN_EDIT"}/')
-  fi
-  curl -sf -X PUT -H "${AUTH}" -H "Content-Type: application/json" \
-    "${KC_URL}/admin/realms/${REALM}/users/profile" \
-    -d "${UPDATED_PROFILE}" 2>/dev/null && \
-    echo "${TAG}   User profile updated (webex_user_id + ADMIN_EDIT)." || \
-    echo "${TAG}   WARNING: could not update user profile for webex_user_id."
-fi
-
-# Also ensure unmanagedAttributePolicy is set even if slack_user_id was already there
+# Also ensure unmanagedAttributePolicy is set when every attribute already existed.
 if ! echo "${PROFILE}" | grep -q '"ADMIN_EDIT"'; then
   UPDATED_PROFILE=$(curl -sf -H "${AUTH}" "${KC_URL}/admin/realms/${REALM}/users/profile" 2>/dev/null || echo "{}")
   if echo "${UPDATED_PROFILE}" | grep -q '"unmanagedAttributePolicy"'; then

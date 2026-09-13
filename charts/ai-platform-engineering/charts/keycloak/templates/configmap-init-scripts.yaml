@@ -5,6 +5,8 @@ metadata:
   labels:
     {{- include "keycloak.labels" . | nindent 4 }}
 data:
+  reconcile-user-profile.sh: |-
+    {{- .Files.Get "scripts/reconcile-user-profile.sh" | nindent 4 }}
   mcp-dcr.sh: |-
     {{- .Files.Get "scripts/mcp-dcr.sh" | nindent 4 }}
   init-token-exchange.sh: |-

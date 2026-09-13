@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { getTomeAuthFromBearerOrSession } from "@/lib/tome/auth";
-import { TOME_MCP_OIDC_PROOF_HEADER } from "@/lib/tome/oidc-jwt";
+import { getMcpAuthFromBearerOrSession } from "@/lib/auth/mcp-auth";
+import { SECONDARY_OIDC_PROOF_HEADER } from "@/lib/auth/secondary-oidc";
 import { isTomeServerEnabled } from "@/lib/tome/guard";
 import { requireInteractiveTomePrincipal } from "@/lib/tome/principal";
 import {
@@ -26,10 +26,13 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   let ownerSub: string;
   try {
-    const { session } = await getTomeAuthFromBearerOrSession(request);
+    const { session } = await getMcpAuthFromBearerOrSession(request);
     requireInteractiveTomePrincipal(session);
-    if ("tomeOidcProof" in session && session.tomeOidcProof) {
-      request.headers.set(TOME_MCP_OIDC_PROOF_HEADER, session.tomeOidcProof);
+    if ("secondaryOidcProof" in session && session.secondaryOidcProof) {
+      request.headers.set(
+        SECONDARY_OIDC_PROOF_HEADER,
+        session.secondaryOidcProof,
+      );
     }
     ownerSub = session.sub || "";
   } catch {

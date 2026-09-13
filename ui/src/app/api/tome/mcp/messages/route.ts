@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { getTomeAuthFromBearerOrSession } from "@/lib/tome/auth";
-import { TOME_MCP_OIDC_PROOF_HEADER } from "@/lib/tome/oidc-jwt";
+import { getMcpAuthFromBearerOrSession } from "@/lib/auth/mcp-auth";
+import { SECONDARY_OIDC_PROOF_HEADER } from "@/lib/auth/secondary-oidc";
 import { isTomeServerEnabled } from "@/lib/tome/guard";
 import { requireInteractiveTomePrincipal } from "@/lib/tome/principal";
 import {
@@ -32,10 +32,13 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (!sseSession) return NextResponse.json({ error: "Unknown or expired SSE session" }, { status: 404 });
 
   try {
-    const { session } = await getTomeAuthFromBearerOrSession(request);
+    const { session } = await getMcpAuthFromBearerOrSession(request);
     requireInteractiveTomePrincipal(session);
-    if ("tomeOidcProof" in session && session.tomeOidcProof) {
-      request.headers.set(TOME_MCP_OIDC_PROOF_HEADER, session.tomeOidcProof);
+    if ("secondaryOidcProof" in session && session.secondaryOidcProof) {
+      request.headers.set(
+        SECONDARY_OIDC_PROOF_HEADER,
+        session.secondaryOidcProof,
+      );
     }
     if (session.sub !== sseSession.ownerSub) {
       return NextResponse.json({ error: "SSE session owner mismatch" }, { status: 403 });
