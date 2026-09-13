@@ -1,8 +1,9 @@
 import { NextRequest } from "next/server";
 
 import { ApiError, withErrorHandler } from "@/lib/api-middleware";
+import { getTomeGistsCollection } from "@/lib/tome/mongo-collections";
 import { getPageStore } from "@/lib/tome/page-store";
-import { normalizePresentationDeck } from "@/lib/tome/presentation";
+import { normalizePresentationDeck, presentationGistSourcePath } from "@/lib/tome/presentation";
 import { presentationHtmlFilename, renderPresentationHtml } from "@/lib/tome/presentation-html";
 import { presentationFilename, renderPresentationPptx } from "@/lib/tome/presentation-pptx";
 import { presentationPublicOrigin } from "@/lib/tome/public-origin";
@@ -17,16 +18,30 @@ type Ctx = { params: Promise<{ slug: string }> };
 export const POST = withErrorHandler(async (request: NextRequest, ctx: Ctx) => {
   const { slug } = await ctx.params;
   const tctx = await loadTomeProject(request, slug);
-  const body = (await request.json().catch(() => ({}))) as { deck?: unknown; format?: unknown };
+  const body = (await request.json().catch(() => ({}))) as {
+    deck?: unknown;
+    format?: unknown;
+    gist_id?: unknown;
+  };
   const format = body.format === undefined ? "pptx" : body.format;
   if (format !== "pptx" && format !== "html") {
     throw new ApiError("format must be pptx or html", 400, "INVALID_FORMAT");
   }
-  const store = await getPageStore();
-  const pages = await store.listPages(tctx.projectId);
+  const gistId = typeof body.gist_id === "string" ? body.gist_id.trim() : "";
+  let allowedPaths: string[];
+  if (gistId) {
+    const gists = await getTomeGistsCollection();
+    const gist = await gists.findOne({ _id: gistId, project_id: tctx.projectId });
+    if (!gist) throw new ApiError("Gist not found", 404, "GIST_NOT_FOUND");
+    allowedPaths = [presentationGistSourcePath(gistId)];
+  } else {
+    const store = await getPageStore();
+    const pages = await store.listPages(tctx.projectId);
+    allowedPaths = Object.keys(pages);
+  }
   let deck;
   try {
-    deck = normalizePresentationDeck(body.deck, Object.keys(pages));
+    deck = normalizePresentationDeck(body.deck, allowedPaths);
   } catch (error) {
     throw new ApiError(
       error instanceof Error ? error.message : "Invalid presentation deck",

@@ -777,7 +777,8 @@ caipe-ui:
   ingress:
     enabled: false
     className: "nginx"
-    annotations: {}
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: "12m"
     hosts:
       - host: caipe-ui.local
         paths:

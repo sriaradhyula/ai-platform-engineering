@@ -20,6 +20,7 @@ describe("ai-assist-tasks registry", () => {
         "enhance-skill-md",
         "agent-system-prompt",
         "agent-description",
+        "tome-inline-markdown",
         "code-snippet",
         "shell-script",
       ]),
@@ -123,6 +124,22 @@ describe("code-snippet task", () => {
     );
     expect(out).toContain("```ts");
     expect(out).toContain("Done.");
+  });
+});
+
+describe("tome-inline-markdown task", () => {
+  const task = getAiAssistTask("tome-inline-markdown")!;
+
+  it("bounds edits to selected text and treats nearby Markdown as context", () => {
+    const msg = task.buildUserMessage({
+      current_value: "A rough sentence.",
+      extra_context: "## Background\nNearby paragraph.",
+      instruction: "Make the selection more concise",
+    });
+    expect(msg).toContain("<selected_markdown>\nA rough sentence.\n</selected_markdown>");
+    expect(msg).toContain("<nearby_markdown>");
+    expect(msg).toContain("User request: Make the selection more concise");
+    expect(task.systemPrompt).toContain("Never rewrite or return the whole document");
   });
 });
 

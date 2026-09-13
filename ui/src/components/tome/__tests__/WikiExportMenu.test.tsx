@@ -32,6 +32,25 @@ describe("WikiExportMenu", () => {
     expect(screen.queryByText("Experimental")).not.toBeInTheDocument();
   });
 
+  it("shows gist downloads and opens a gist-scoped presentation workflow", () => {
+    render(
+      <WikiExportMenu
+        slug="example-project"
+        gist={{ id: "gist-1", title: "Example gist", filename: "example-gist.md" }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Export this gist" }));
+    expect(screen.getByRole("link", { name: /Markdown/ })).toHaveAttribute(
+      "href",
+      "/api/tome/projects/example-project/export?format=markdown&gist=gist-1",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Export as presentation/ }));
+    expect(screen.getByText("Example gist")).toBeInTheDocument();
+    expect(screen.getByText("example-gist.md")).toBeInTheDocument();
+    expect(screen.queryByText("Entire wiki")).not.toBeInTheDocument();
+  });
+
   it("opens the guided presentation workflow", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
       ok: true,

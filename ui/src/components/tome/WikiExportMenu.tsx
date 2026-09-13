@@ -22,21 +22,28 @@ interface Props {
   slug: string;
   /** When present, export only this page; otherwise export the complete wiki. */
   path?: string;
+  /** When present, export this gist instead of wiki content. */
+  gist?: { id: string; title: string; filename: string };
   triggerClassName?: string;
 }
 
-export function wikiExportHref(slug: string, format: string, path?: string): string {
+export function wikiExportHref(
+  slug: string,
+  format: string,
+  path?: string,
+  gistId?: string,
+): string {
   const params = new URLSearchParams({ format });
   if (path) params.set("path", path);
+  if (gistId) params.set("gist", gistId);
   return `/api/tome/projects/${encodeURIComponent(slug)}/export?${params.toString()}`;
 }
 
-/** Shared PDF/HTML/Markdown download menu for complete-wiki and single-page exports. */
-export function WikiExportMenu({ slug, path, triggerClassName }: Props) {
+/** Shared PDF/HTML/Markdown download menu for wiki and gist exports. */
+export function WikiExportMenu({ slug, path, gist, triggerClassName }: Props) {
   const [open, setOpen] = useState(false);
   const [presentationOpen, setPresentationOpen] = useState(false);
-  const pageScoped = Boolean(path);
-  const label = pageScoped ? "Export this page" : "Export complete wiki";
+  const label = gist ? "Export this gist" : path ? "Export this page" : "Export complete wiki";
 
   return (
     <>
@@ -61,7 +68,7 @@ export function WikiExportMenu({ slug, path, triggerClassName }: Props) {
         {EXPORT_FORMATS.map(([format, formatLabel, description, Icon]) => (
           <a
             key={format}
-            href={wikiExportHref(slug, format, path)}
+            href={wikiExportHref(slug, format, path, gist?.id)}
             download
             onClick={() => setOpen(false)}
             className="flex items-start gap-2 rounded px-2 py-1.5 hover:bg-muted"
@@ -96,6 +103,7 @@ export function WikiExportMenu({ slug, path, triggerClassName }: Props) {
       <PresentationExportDialog
         slug={slug}
         currentPath={path}
+        gist={gist}
         open={presentationOpen}
         onOpenChange={setPresentationOpen}
       />

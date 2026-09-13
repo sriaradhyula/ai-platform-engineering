@@ -26,6 +26,7 @@ type Diagnostic,
 type ReactCodeMirrorRef,
 } from "@/components/skills/workspace/RichCodeEditor";
 import { SkillMdPreview } from "@/components/skills/workspace/SkillMdPreview";
+import { MarkdownEditorModeToggle } from "@/components/shared/MarkdownEditorModeToggle";
 import { Button } from "@/components/ui/button";
 import { parseSkillMd } from "@/lib/skill-md-parser";
 import { cn } from "@/lib/utils";
@@ -51,6 +52,12 @@ import { useCallback,useMemo,useRef,useState } from "react";
  * the source view to see frontmatter.
  */
 export type SkillMdViewMode = "edit" | "split" | "preview";
+
+const SKILL_EDITOR_MODES = [
+  { value: "edit", label: "Edit", title: "Edit only", icon: Pencil, testId: "skill-md-view-edit" },
+  { value: "split", label: "Split", title: "Edit + live preview", icon: Columns2, testId: "skill-md-view-split" },
+  { value: "preview", label: "Preview", title: "Preview only", icon: Eye, testId: "skill-md-view-preview" },
+] as const;
 
 export interface SkillMdEditorProps {
   /** Markdown source. Controlled. */
@@ -262,52 +269,12 @@ export function SkillMdEditor({
               first thing authors see when they open SKILL.md — the
               previous editor put preview here too, so we preserve the
               muscle memory. */}
-          <div
-            className="inline-flex items-center rounded-md border border-border/50 bg-background p-0.5"
-            role="group"
-            aria-label="Editor view mode"
-            data-testid="skill-md-view-toggle"
-          >
-            <Button
-              type="button"
-              variant={viewMode === "edit" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-6 gap-1 px-2 text-xs"
-              onClick={() => setViewMode("edit")}
-              aria-pressed={viewMode === "edit"}
-              data-testid="skill-md-view-edit"
-              title="Edit only"
-            >
-              <Pencil className="h-3 w-3" />
-              Edit
-            </Button>
-            <Button
-              type="button"
-              variant={viewMode === "split" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-6 gap-1 px-2 text-xs"
-              onClick={() => setViewMode("split")}
-              aria-pressed={viewMode === "split"}
-              data-testid="skill-md-view-split"
-              title="Edit + live preview"
-            >
-              <Columns2 className="h-3 w-3" />
-              Split
-            </Button>
-            <Button
-              type="button"
-              variant={viewMode === "preview" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-6 gap-1 px-2 text-xs"
-              onClick={() => setViewMode("preview")}
-              aria-pressed={viewMode === "preview"}
-              data-testid="skill-md-view-preview"
-              title="Preview only"
-            >
-              <Eye className="h-3 w-3" />
-              Preview
-            </Button>
-          </div>
+          <MarkdownEditorModeToggle
+            value={viewMode}
+            options={SKILL_EDITOR_MODES}
+            onChange={setViewMode}
+            testId="skill-md-view-toggle"
+          />
 
           <div className="flex-1" />
 

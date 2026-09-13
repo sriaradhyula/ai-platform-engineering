@@ -12,7 +12,11 @@ import { NextRequest } from "next/server";
 import { ApiError, successResponse, withErrorHandler } from "@/lib/api-middleware";
 import { loadTomeProject } from "@/lib/tome/tome-api";
 import { auditTome, tomeActorFromAuth } from "@/lib/tome/audit";
-import { normalizeGistTags } from "@/lib/tome/gists";
+import {
+  defaultGistFilename,
+  normalizeGistFilename,
+  normalizeGistTags,
+} from "@/lib/tome/gists";
 import { getTomeGistsCollection } from "@/lib/tome/mongo-collections";
 import { isMyceliumConfigured, postEvent } from "@/lib/tome/mycelium";
 import { randomUUID } from "crypto";
@@ -37,6 +41,7 @@ export const GET = withErrorHandler(async (request: NextRequest, ctx: Ctx) => {
     gists: rows.map((g) => ({
       id: String(g._id),
       title: g.title,
+      filename: g.filename ?? defaultGistFilename(g.title),
       body: g.body,
       author: g.author,
       created_at: g.created_at,
@@ -58,6 +63,7 @@ export const POST = withErrorHandler(async (request: NextRequest, ctx: Ctx) => {
 
   const body = (await request.json().catch(() => ({}))) as {
     title?: string;
+    filename?: unknown;
     body?: string;
     tags?: unknown;
   };
@@ -70,10 +76,19 @@ export const POST = withErrorHandler(async (request: NextRequest, ctx: Ctx) => {
 
   const gists = await getTomeGistsCollection();
   const tags = normalizeGistTags(body.tags);
+  let filename: string;
+  try {
+    filename = body.filename === undefined
+      ? defaultGistFilename(body.title.trim())
+      : normalizeGistFilename(body.filename);
+  } catch (error) {
+    throw new ApiError((error as Error).message, 400, "BAD_REQUEST");
+  }
   const gist = {
     _id: randomUUID(),
     project_id: tctx.projectId,
     title: body.title.trim(),
+    filename,
     body: body.body,
     author: tctx.user.email || "unknown",
     created_at: new Date(),

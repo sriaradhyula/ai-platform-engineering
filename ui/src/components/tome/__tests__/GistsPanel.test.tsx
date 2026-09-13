@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { GistsPanel } from "../GistsPanel";
 
@@ -12,15 +12,19 @@ describe("GistsPanel", () => {
   });
 
   it("lets project readers start a new gist without steward access", async () => {
+    const onNewGist = jest.fn();
     render(
       <GistsPanel
         slug="example-project"
         canEdit={false}
         onOpenGist={jest.fn()}
+        onNewGist={onNewGist}
       />,
     );
 
-    expect(screen.getByRole("button", { name: "New gist" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "New gist" }));
+    expect(onNewGist).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
   });
 });

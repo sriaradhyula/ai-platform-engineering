@@ -1,7 +1,9 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import { normalizeMarkdownCodeLanguage } from "@/lib/markdown-code-languages";
 import { parseTomeEmbed } from "@/lib/tome/embeds";
+import { decorateTomeColumns } from "@/lib/tome/page-columns";
 import {
   createEmbedError,
   createEmbedPreview,
@@ -104,7 +106,7 @@ md.use(
       }
 
       const hl = await getHighlighter();
-      let language = lang || "text";
+      let language = normalizeMarkdownCodeLanguage(lang || "text");
       if (!(language in bundledLanguages)) {
         language = "text";
       }
@@ -215,6 +217,65 @@ function decorateTables(root: HTMLElement) {
   }
 }
 
+/**
+ * Crepe stores block-image scale and alignment in its Markdown alt field and
+ * the user-visible caption in the Markdown image title. Restore both for
+ * preview/read-only rendering.
+ */
+function decorateSizedImages(root: HTMLElement) {
+  for (const image of root.querySelectorAll<HTMLImageElement>("img")) {
+    const metadata = image
+      .getAttribute("alt")
+      ?.trim()
+      .match(/^(\d+(?:\.\d+)?)(?:\|(left|center|right))?$/);
+    const caption = image.title.trim();
+    let widthPercent: number | null = null;
+    let alignment = "center";
+
+    if (metadata) {
+      const scale = Number(metadata[1]);
+      if (Number.isFinite(scale) && scale > 0) {
+        widthPercent = Math.min(100, Math.max(25, Math.round(scale * 100)));
+        alignment = metadata[2] || "center";
+      }
+    }
+
+    image.alt = caption || (metadata ? "Embedded image" : image.alt);
+    if (!caption) {
+      if (widthPercent !== null && (widthPercent < 100 || alignment !== "center")) {
+        image.classList.add("tome-sized-image");
+        image.style.setProperty("--tome-media-width", `${widthPercent}%`);
+        image.dataset.mediaAlign = alignment;
+      }
+      continue;
+    }
+
+    const figure = document.createElement("figure");
+    figure.className = "tome-image-figure";
+    figure.dataset.mediaAlign = alignment;
+    if (widthPercent !== null) {
+      figure.style.setProperty("--tome-media-width", `${widthPercent}%`);
+    }
+
+    const imageContent = image.parentElement?.tagName === "A" ? image.parentElement : image;
+    const paragraph = imageContent.parentElement;
+    if (
+      paragraph?.tagName === "P" &&
+      paragraph.children.length === 1 &&
+      !paragraph.textContent?.trim()
+    ) {
+      paragraph.replaceWith(figure);
+    } else {
+      imageContent.replaceWith(figure);
+    }
+    figure.appendChild(imageContent);
+
+    const figcaption = document.createElement("figcaption");
+    figcaption.textContent = caption;
+    figure.appendChild(figcaption);
+  }
+}
+
 function decorateExternalEmbeds(root: HTMLElement) {
   const codeBlocks = root.querySelectorAll("pre");
   for (const pre of codeBlocks) {
@@ -230,8 +291,12 @@ function decorateExternalEmbeds(root: HTMLElement) {
     const providerLabel =
       provider === "arxiv" ? "arXiv" : provider === "youtube" ? "YouTube" : "Vidcast";
     const replacement = parsed.ok === true
-      ? createEmbedPreview(parsed.value)
-      : createEmbedError(provider, `Could not embed ${providerLabel}: ${parsed.error}`);
+      ? createEmbedPreview(parsed.value, false)
+      : createEmbedError(
+          provider,
+          `Could not embed ${providerLabel}: ${parsed.error}`,
+          false,
+        );
     pre.replaceWith(replacement);
   }
 }
@@ -313,8 +378,10 @@ interface MarkdownRendererProps {
   onInternalLink?: (path: string) => void;
   /** Resolve a glossary term slug to its definition for the hover card. */
   glossaryPreview?: GlossaryResolver;
-  /** Enable allowlisted Vidcast, YouTube, and arXiv fenced blocks. */
+  /** Enable allowlisted Vidcast, YouTube, arXiv, and PDF fenced blocks. */
   enableExternalEmbeds?: boolean;
+  /** Render Tome column markers as responsive two- or three-column sections. */
+  enableTomeColumns?: boolean;
 }
 
 /**
@@ -336,6 +403,7 @@ export function MarkdownRenderer({
   onInternalLink,
   glossaryPreview,
   enableExternalEmbeds = false,
+  enableTomeColumns = false,
 }: MarkdownRendererProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
@@ -382,6 +450,8 @@ export function MarkdownRenderer({
     if (enableExternalEmbeds) decorateExternalEmbeds(temp);
     decorateCopyButtons(temp);
     decorateTables(temp);
+    decorateSizedImages(temp);
+    if (enableTomeColumns) decorateTomeColumns(temp);
 
     morphdom(container, temp, {
       childrenOnly: true,
@@ -544,7 +614,7 @@ export function MarkdownRenderer({
         hideCard();
       };
     }
-  }, [enableExternalEmbeds]);
+  }, [enableExternalEmbeds, enableTomeColumns]);
 
   // Parse + morph on content changes
   useEffect(() => {

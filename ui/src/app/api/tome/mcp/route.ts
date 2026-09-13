@@ -1343,7 +1343,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "tome_list_gists",
     description:
-      "List a project's gists — lightweight, non-wiki context chunks (a prompt, a snippet, a deploy note) saved without becoming part of the curated wiki. Returns id, title, author, created_at, tags, and a url for each (not the full body — use tome_get_gist for that). `project_slug` is required; `tag` optionally filters to gists carrying that exact tag.",
+      "List a project's gists — lightweight, non-wiki context chunks (a prompt, a snippet, a deploy note) saved without becoming part of the curated wiki. Returns id, title, filename, author, created_at, tags, and a url for each (not the full body — use tome_get_gist for that). `project_slug` is required; `tag` optionally filters to gists carrying that exact tag.",
     inputSchema: schema({ project_slug: STR, tag: STR }, ["project_slug"]),
     handler: async (request, fwd, args) => {
       const slug = encodeURIComponent(String(args.project_slug));
@@ -1353,6 +1353,7 @@ const TOOLS: ToolDef[] = [
       const gists = (data?.gists ?? []).map((g: any) => ({
         id: g.id,
         title: g.title,
+        filename: g.filename,
         author: g.author,
         created_at: g.created_at,
         tags: g.tags ?? [],
@@ -1387,15 +1388,22 @@ const TOOLS: ToolDef[] = [
   {
     name: "tome_create_gist",
     description:
-      "Save a new gist to a project — a quick, non-committal chunk of context (an agent memory, a working prompt, a config incantation). It is NOT ingested into the wiki and NOT loaded into agent context by default; it's a stored, linkable chunk a teammate can pull in on demand. Automatically posted to the project's Feed as a linkable reference so it's discoverable — sharing isn't a separate step. Returns a url to view the gist; share that with the user. `project_slug`, `title`, and `body` (markdown) are required; `tags` is an optional array of freeform labels for filtering (no hierarchy).",
+      "Save a new gist to a project — a quick, non-committal chunk of context (an agent memory, a working prompt, a config incantation). It is NOT ingested into the wiki and NOT loaded into agent context by default; it's a stored, linkable chunk a teammate can pull in on demand. Automatically posted to the project's Feed as a linkable reference so it's discoverable — sharing isn't a separate step. Returns a url to view the gist; share that with the user. `project_slug`, `title`, and `body` (markdown) are required; `filename` and `tags` are optional.",
     inputSchema: schema(
-      { project_slug: STR, title: STR, body: STR, tags: { type: "array", items: STR } },
+      {
+        project_slug: STR,
+        title: STR,
+        filename: STR,
+        body: STR,
+        tags: { type: "array", items: STR },
+      },
       ["project_slug", "title", "body"],
     ),
     handler: async (request, fwd, args) => {
       const slug = encodeURIComponent(String(args.project_slug));
       const r = await fwd("POST", `/api/tome/projects/${slug}/gists`, {
         title: String(args.title),
+        ...(args.filename !== undefined ? { filename: String(args.filename) } : {}),
         body: String(args.body),
         tags: parseTagsArg(args.tags),
       });
@@ -1410,25 +1418,32 @@ const TOOLS: ToolDef[] = [
   {
     name: "tome_update_gist",
     description:
-      "Edit an existing gist without creating a new Feed entry. `project_slug` and `gist_id` are required. Provide at least one of `title`, `body` (markdown), or `tags`; omitted fields are preserved, while an empty `tags` array clears all tags. Returns the updated gist and its app URL.",
+      "Edit an existing gist without creating a new Feed entry. `project_slug` and `gist_id` are required. Provide at least one of `title`, `filename`, `body` (markdown), or `tags`; omitted fields are preserved, while an empty `tags` array clears all tags. Returns the updated gist and its app URL.",
     inputSchema: schema(
       {
         project_slug: STR,
         gist_id: STR,
         title: STR,
+        filename: STR,
         body: STR,
         tags: { type: "array", items: STR },
       },
       ["project_slug", "gist_id"],
     ),
     handler: async (request, fwd, args) => {
-      if (args.title === undefined && args.body === undefined && args.tags === undefined) {
-        return toolText("Provide at least one of `title`, `body`, or `tags`.", true);
+      if (
+        args.title === undefined &&
+        args.filename === undefined &&
+        args.body === undefined &&
+        args.tags === undefined
+      ) {
+        return toolText("Provide at least one of `title`, `filename`, `body`, or `tags`.", true);
       }
       const slug = encodeURIComponent(String(args.project_slug));
       const id = encodeURIComponent(String(args.gist_id));
       const update: Record<string, unknown> = {};
       if (args.title !== undefined) update.title = String(args.title);
+      if (args.filename !== undefined) update.filename = String(args.filename);
       if (args.body !== undefined) update.body = String(args.body);
       if (args.tags !== undefined) update.tags = parseTagsArg(args.tags);
       const data = ensureOk(

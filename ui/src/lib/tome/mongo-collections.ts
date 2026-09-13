@@ -20,6 +20,8 @@ import {
   type EdgeIndexRow,
   type TrackedEntityIndexRow,
   type Gist,
+  type TomeFolder,
+  type TomePagePlacement,
 } from "@/types/tome";
 
 export async function getTomePageRevisionsCollection(): Promise<
@@ -70,4 +72,12 @@ export async function getTomeTrackedEntitiesIndexCollection(): Promise<
 
 export async function getTomeGistsCollection(): Promise<Collection<Gist>> {
   return getCollection<Gist>(TOME_COLLECTIONS.GISTS);
+}
+
+export async function getTomeFoldersCollection(): Promise<Collection<TomeFolder>> {
+  return getCollection<TomeFolder>(TOME_COLLECTIONS.FOLDERS);
+}
+
+export async function getTomePagePlacementsCollection(): Promise<Collection<TomePagePlacement>> {
+  return getCollection<TomePagePlacement>(TOME_COLLECTIONS.PAGE_PLACEMENTS);
 }

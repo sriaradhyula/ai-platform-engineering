@@ -1,9 +1,35 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeftRight, ChevronDown, Code, Eye, Loader2, Pencil, X } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ClipboardEvent as ReactClipboardEvent,
+} from "react";
+import { AlertTriangle, ArrowLeftRight, ChevronDown, ImagePlus, Loader2, X } from "lucide-react";
 
+import {
+  MARKDOWN_DOCUMENT_EDITOR_MODES,
+  MarkdownEditorModeToggle,
+  type MarkdownDocumentEditorMode,
+} from "@/components/shared/MarkdownEditorModeToggle";
+import { MarkdownRenderer } from "@/components/shared/timeline/MarkdownRenderer";
+import { AiAssistButton } from "@/components/ai-assist";
+import {
+  RichCodeEditor,
+  type ReactCodeMirrorRef,
+} from "@/components/skills/workspace/RichCodeEditor";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Popover,
   PopoverContent,
@@ -11,6 +37,7 @@ import {
 } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { CrepeEditor, type CrepeEditorHandle } from "@/components/tome/CrepeEditor";
+import { TomeMediaInsertDialog } from "@/components/tome/TomeMediaInsertDialog";
 import type { GlossaryResolver } from "@/lib/tome/tome-links";
 import { GlossaryFields } from "@/components/tome/GlossaryFields";
 import { EdgeFields } from "@/components/tome/EdgeFields";
@@ -45,6 +72,8 @@ import {
   type FrontmatterValue,
 } from "@/lib/tome/schema";
 import { cn } from "@/lib/utils";
+import { diagnoseTomeMarkdown } from "@/lib/tome/markdown-diagnostics";
+import { matchTomeEmbedUrl } from "@/lib/tome/embeds";
 import type { PageKind } from "@/types/tome";
 
 /** User-flippable kinds (report is system-managed via path). */
@@ -59,7 +88,12 @@ interface Props {
   path: string;
   /** Current page markdown (frontmatter + body). */
   markdown: string;
-  onWrite: (path: string, markdown: string, message: string) => Promise<void>;
+  onWrite: (
+    path: string,
+    markdown: string,
+    message: string,
+    options?: { baseRevisionId?: string | null; force?: boolean },
+  ) => Promise<void>;
   onReload: () => void | Promise<void>;
   /** When provided, renders a close (×) button — used by the artifact pane. */
   onClose?: () => void;
@@ -78,6 +112,11 @@ interface Props {
   onRename?: (oldPath: string, newPath: string) => Promise<void>;
   /** OpenFGA steward/admin decision for all write affordances. */
   canEdit?: boolean;
+  /** Current project paths used to flag broken wiki links in source mode. */
+  knownPaths?: ReadonlySet<string>;
+  /** Open a just-created page directly in editing mode. */
+  autoStartEditing?: boolean;
+  onAutoStartEditing?: () => void;
 }
 
 /**
@@ -102,10 +141,12 @@ export function WikiPageView({
   glossaryPreview,
   onRename,
   canEdit = true,
+  knownPaths,
+  autoStartEditing = false,
+  onAutoStartEditing,
 }: Props) {
   const [isEditing, setIsEditing] = useState(false);
-  const [rawMode, setRawMode] = useState(false);
-  const [previewMode, setPreviewMode] = useState(false);
+  const [editorMode, setEditorMode] = useState<MarkdownDocumentEditorMode>("rich");
   const [wideReading, setWideReading] = useState(false);
   const [rawDraft, setRawDraft] = useState("");
   const [saving, setSaving] = useState(false);
@@ -114,12 +155,27 @@ export function WikiPageView({
   // back from raw mode so unsaved raw edits survive the remount.
   const [richInitialBody, setRichInitialBody] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [mediaOpen, setMediaOpen] = useState(false);
+  const [inlineAiOpen, setInlineAiOpen] = useState(false);
+  const [draftStatus, setDraftStatus] = useState<string | null>(null);
+  const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
+  const [baseRevisionId, setBaseRevisionId] = useState<string | null>(null);
+  const [conflict, setConflict] = useState<{
+    currentRevisionId: string | null;
+    currentMarkdown: string;
+    currentAuthor: string | null;
+    currentCreatedAt: string | null;
+  } | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [pathDraft, setPathDraft] = useState(path);
   const editorRef = useRef<CrepeEditorHandle>(null);
+  const sourceEditorRef = useRef<ReactCodeMirrorRef | null>(null);
+  const sourceAiSelectionRef = useRef<{ from: number; to: number } | null>(null);
+  const previewMode = editorMode === "preview";
 
   // Last revision — fetched once per page, used for the "Updated X ago by Y" line.
   const [lastRevision, setLastRevision] = useState<{
+    id: string;
     author: string;
     created_at: string;
   } | null>(null);
@@ -147,11 +203,16 @@ export function WikiPageView({
         : (SPEC_BY_PATH.get(path)?.title ?? path);
     return { frontmatter: f, body: b, kind: k, title: t };
   }, [markdown, path]);
+  const [draftFrontmatter, draftBody] = useMemo(() => {
+    const [fm, draftBodyValue] = parseFrontmatter(rawDraft);
+    return [fm as Record<string, FrontmatterValue>, draftBodyValue] as const;
+  }, [rawDraft]);
 
   const isGlossary = useMemo(() => isGlossaryTerm(frontmatter), [frontmatter]);
   const isEdgeEntry = useMemo(() => isEdge(frontmatter), [frontmatter]);
   const isTrackedEntry = useMemo(() => isTrackedEntity(frontmatter), [frontmatter]);
   const isMirror = useMemo(() => isMirrorPage(frontmatter), [frontmatter]);
+  const filename = useMemo(() => path.split("/").pop() || path, [path]);
 
   // Template binding (#488/#508): passive, zero-extra-fetch badge read
   // straight off this page's own frontmatter (code-stamped by the ingest
@@ -182,11 +243,35 @@ export function WikiPageView({
   // Switching pages resets edit state.
   useEffect(() => {
     setIsEditing(false);
-    setRawMode(false);
-    setPreviewMode(false);
+    setEditorMode("rich");
     setError(null);
     setRenaming(false);
+    setDraftStatus(null);
+    setDraftSavedAt(null);
   }, [path]);
+
+  const draftStorageKey = useMemo(
+    () => `tome:draft:${slug}:${path}`,
+    [path, slug],
+  );
+
+  useEffect(() => {
+    if (!isEditing) return;
+    const timer = window.setTimeout(() => {
+      const updatedAt = new Date().toISOString();
+      window.localStorage.setItem(
+        draftStorageKey,
+        JSON.stringify({
+          body: serializeFrontmatter(fmDraft, draftBody),
+          baseRevisionId,
+          updatedAt,
+        }),
+      );
+      setDraftStatus("Draft saved locally");
+      setDraftSavedAt(updatedAt);
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [baseRevisionId, draftBody, draftStorageKey, fmDraft, isEditing]);
 
   // Track content changes that landed while this page was open (an out-of-band
   // edit picked up by the polling in TomeWiki) — surfaced as a badge on the
@@ -211,27 +296,22 @@ export function WikiPageView({
   }, [markdown]);
 
   const startRename = useCallback(() => {
-    setPathDraft(path);
+    setPathDraft(filename);
     setRenaming(true);
-  }, [path]);
+  }, [filename]);
 
   const commitRename = useCallback(async () => {
-    const next = pathDraft.trim();
+    const nextFilename = pathDraft.trim().split(/[\\/]/).pop()?.trim() ?? "";
+    const parentPath = path.slice(0, path.lastIndexOf("/") + 1);
+    const next = `${parentPath}${nextFilename}`;
     setRenaming(false);
-    if (!next || next === path || !onRename) return;
+    if (!nextFilename || next === path || !onRename) return;
     try {
       await onRename(path, next);
     } catch (e) {
       setError(String((e as Error)?.message ?? e));
     }
   }, [pathDraft, path, onRename]);
-
-  // Seed richInitialBody when an edit session starts so it's available for
-  // raw→rich mode transitions without depending on the editorRef being ready.
-  useEffect(() => {
-    if (isEditing) setRichInitialBody(body);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isEditing]);
 
   // External change (agent edit) while not editing → remount to show it live.
   useEffect(() => {
@@ -243,18 +323,17 @@ export function WikiPageView({
   useEffect(() => {
     if (locked && isEditing) {
       setIsEditing(false);
-      setRawMode(false);
-      setPreviewMode(false);
+      setEditorMode("rich");
       setEditorEpoch((n) => n + 1);
     }
   }, [locked, isEditing]);
 
   const handleSave = useCallback(async () => {
-    if (!rawMode && !editorRef.current) return;
+    if (editorMode === "rich" && !editorRef.current) return;
     setSaving(true);
     setError(null);
     try {
-      let fmToWrite = frontmatter;
+      let fmToWrite = { ...fmDraft };
       if (isGlossary) {
         fmToWrite = { ...fmDraft };
         const term = String(fmToWrite[FM_TERM] ?? "").trim();
@@ -270,48 +349,226 @@ export function WikiPageView({
       } else if (isTrackedEntry) {
         fmToWrite = { ...fmDraft };
       }
-      const bodyContent = rawMode ? rawDraft : editorRef.current!.getMarkdown();
+      const bodyContent = editorMode === "rich"
+        ? editorRef.current?.getMarkdown() ?? draftBody
+        : draftBody;
       const md = serializeFrontmatter(fmToWrite, bodyContent);
-      await onWrite(path, md, `edit ${path}`);
+      await onWrite(path, md, `edit ${path}`, { baseRevisionId });
+      void fetch(`/api/tome/projects/${slug}/history/${path}`)
+        .then((response) => response.json())
+        .then((payload) => setLastRevision(payload?.data?.revisions?.[0] ?? null))
+        .catch(() => {});
+      window.localStorage.removeItem(draftStorageKey);
       setIsEditing(false);
-      setRawMode(false);
-      setPreviewMode(false);
+      setEditorMode("rich");
+      setDraftStatus(null);
+      setDraftSavedAt(null);
       setEditorEpoch((n) => n + 1);
+    } catch (e) {
+      const saveError = e as Error & {
+        code?: string;
+        currentRevisionId?: string | null;
+        currentMarkdown?: string;
+        currentAuthor?: string | null;
+        currentCreatedAt?: string | null;
+      };
+      if (saveError.code === "PAGE_EDIT_CONFLICT") {
+        setConflict({
+          currentRevisionId: saveError.currentRevisionId ?? null,
+          currentMarkdown: saveError.currentMarkdown ?? "",
+          currentAuthor: saveError.currentAuthor ?? null,
+          currentCreatedAt: saveError.currentCreatedAt ?? null,
+        });
+      } else {
+        setError(String(saveError?.message ?? e));
+      }
+    } finally {
+      setSaving(false);
+    }
+  }, [baseRevisionId, draftBody, draftStorageKey, editorMode, isGlossary, isEdgeEntry, isTrackedEntry, fmDraft, onWrite, path, slug]);
+
+  const handleCancel = useCallback(() => {
+    setIsEditing(false);
+    setEditorMode("rich");
+    window.localStorage.removeItem(draftStorageKey);
+    setDraftStatus(null);
+    setDraftSavedAt(null);
+    setEditorEpoch((n) => n + 1);
+  }, [draftStorageKey]);
+
+  const handleModeChange = useCallback((nextMode: MarkdownDocumentEditorMode) => {
+    if (editorMode === "rich") {
+      setRawDraft(serializeFrontmatter(fmDraft, editorRef.current?.getMarkdown() ?? draftBody));
+    }
+    if (nextMode === "rich" && editorMode !== "rich") {
+      setFmDraft(draftFrontmatter);
+      setRichInitialBody(draftBody);
+      setEditorEpoch((n) => n + 1);
+    }
+    setEditorMode(nextMode);
+  }, [draftBody, draftFrontmatter, editorMode, fmDraft]);
+
+  const insertMediaMarkdown = useCallback((embedMarkdown: string) => {
+    if (editorMode === "rich") {
+      editorRef.current?.insertMarkdown(embedMarkdown);
+      return;
+    }
+    const view = sourceEditorRef.current?.view;
+    if (view) {
+      const selection = view.state.selection.main;
+      view.dispatch({
+        changes: { from: selection.from, to: selection.to, insert: embedMarkdown },
+        selection: { anchor: selection.from + embedMarkdown.length },
+      });
+      view.focus();
+    } else {
+      setRawDraft((current) => `${current}${embedMarkdown}`);
+    }
+  }, [editorMode]);
+
+  const handleSourcePaste = useCallback(
+    (event: ReactClipboardEvent<HTMLDivElement>) => {
+      if (event.clipboardData.files.length) return;
+      const match = matchTomeEmbedUrl(event.clipboardData.getData("text/plain"));
+      if (!match) return;
+      event.preventDefault();
+      event.stopPropagation();
+      insertMediaMarkdown(match.markdown);
+    },
+    [insertMediaMarkdown],
+  );
+
+  const handleInlineAiOpenChange = useCallback((open: boolean) => {
+    if (open) {
+      if (editorMode === "source") {
+        const selection = sourceEditorRef.current?.view?.state.selection.main;
+        sourceAiSelectionRef.current = selection
+          ? { from: selection.from, to: selection.to }
+          : null;
+      } else {
+        editorRef.current?.captureSelection();
+      }
+    } else if (editorMode === "source") {
+      const view = sourceEditorRef.current?.view;
+      const selection = sourceAiSelectionRef.current;
+      sourceAiSelectionRef.current = null;
+      if (view && selection) {
+        view.dispatch({ selection: { anchor: selection.from, head: selection.to } });
+        view.focus();
+      }
+    } else {
+      editorRef.current?.restoreSelection();
+    }
+    setInlineAiOpen(open);
+  }, [editorMode]);
+
+  const inlineAiContext = useCallback(() => {
+    let selected = "";
+    let documentBody = draftBody;
+    if (editorMode === "source") {
+      const view = sourceEditorRef.current?.view;
+      if (view) {
+        const { from, to } = sourceAiSelectionRef.current ?? view.state.selection.main;
+        selected = view.state.sliceDoc(from, to);
+      }
+    } else {
+      selected = editorRef.current?.getSelectedText() ?? "";
+      documentBody = editorRef.current?.getMarkdown() ?? draftBody;
+    }
+    const excerpt = documentBody.length > 3000
+      ? `${documentBody.slice(0, 3000)}\n…`
+      : documentBody;
+    return {
+      current_value: selected,
+      extra_context: `Page: ${path}\nDocument excerpt:\n${excerpt}`,
+    };
+  }, [draftBody, editorMode, path]);
+
+  const applyInlineAi = useCallback((markdown: string) => {
+    if (editorMode === "source") {
+      const view = sourceEditorRef.current?.view;
+      if (!view) return;
+      const { from, to } = sourceAiSelectionRef.current ?? view.state.selection.main;
+      sourceAiSelectionRef.current = null;
+      view.dispatch({
+        changes: { from, to, insert: markdown },
+        selection: { anchor: from + markdown.length },
+      });
+      view.focus();
+      return;
+    }
+    editorRef.current?.replaceSelection(markdown);
+  }, [editorMode]);
+
+  const startEditing = useCallback(() => {
+    let initialMarkdown = markdown;
+    let initialBase = lastRevision?.id ?? null;
+    setDraftStatus(null);
+    setDraftSavedAt(null);
+    try {
+      const stored = window.localStorage.getItem(draftStorageKey);
+      if (stored) {
+        const recovered = JSON.parse(stored) as {
+          body?: unknown;
+          baseRevisionId?: unknown;
+          updatedAt?: unknown;
+        };
+        if (typeof recovered.body === "string" && recovered.body !== markdown) {
+          initialMarkdown = recovered.body;
+          initialBase = typeof recovered.baseRevisionId === "string" ? recovered.baseRevisionId : initialBase;
+          setDraftStatus("Recovered local draft");
+          if (
+            typeof recovered.updatedAt === "string" &&
+            Number.isFinite(Date.parse(recovered.updatedAt))
+          ) {
+            setDraftSavedAt(recovered.updatedAt);
+          }
+        }
+      }
+    } catch {
+      window.localStorage.removeItem(draftStorageKey);
+    }
+    const [recoveredFrontmatter, recoveredBody] = parseFrontmatter(initialMarkdown);
+    setRawDraft(initialMarkdown);
+    setFmDraft(recoveredFrontmatter as Record<string, FrontmatterValue>);
+    setRichInitialBody(recoveredBody);
+    setBaseRevisionId(initialBase);
+    setEditorMode("rich");
+    setEditorEpoch((n) => n + 1);
+    setIsEditing(true);
+  }, [draftStorageKey, lastRevision?.id, markdown]);
+
+  useEffect(() => {
+    if (!autoStartEditing || isEditing || !canEdit || locked) return;
+    startEditing();
+    onAutoStartEditing?.();
+  }, [autoStartEditing, canEdit, isEditing, locked, onAutoStartEditing, startEditing]);
+
+  const forceSave = useCallback(async () => {
+    if (!conflict) return;
+    setSaving(true);
+    try {
+      const bodyContent = editorMode === "rich"
+        ? editorRef.current?.getMarkdown() ?? draftBody
+        : draftBody;
+      await onWrite(
+        path,
+        serializeFrontmatter(fmDraft, bodyContent),
+        `resolve edit conflict on ${path}`,
+        { baseRevisionId: conflict.currentRevisionId, force: true },
+      );
+      window.localStorage.removeItem(draftStorageKey);
+      setConflict(null);
+      setIsEditing(false);
+      setEditorMode("rich");
+      setDraftStatus(null);
+      setDraftSavedAt(null);
     } catch (e) {
       setError(String((e as Error)?.message ?? e));
     } finally {
       setSaving(false);
     }
-  }, [rawMode, rawDraft, frontmatter, isGlossary, isEdgeEntry, isTrackedEntry, fmDraft, onWrite, path]);
-
-  const handleCancel = useCallback(() => {
-    setIsEditing(false);
-    setRawMode(false);
-    setPreviewMode(false);
-    setEditorEpoch((n) => n + 1);
-  }, []);
-
-  const handleToggleRawMode = useCallback(() => {
-    if (!rawMode) {
-      // Crepe → raw: snapshot the current rich content into the textarea.
-      const current = editorRef.current?.getMarkdown() ?? richInitialBody;
-      setRawDraft(current);
-    } else {
-      // Raw → Crepe: feed the textarea content into a fresh editor instance.
-      setRichInitialBody(rawDraft);
-      setEditorEpoch((n) => n + 1);
-    }
-    setRawMode((v) => !v);
-  }, [rawMode, rawDraft, richInitialBody]);
-
-  const handleTogglePreview = useCallback(() => {
-    if (!previewMode && rawMode) {
-      // Render the raw draft through Crepe without losing the textarea state.
-      setRichInitialBody(rawDraft);
-      setEditorEpoch((n) => n + 1);
-    }
-    setPreviewMode((current) => !current);
-  }, [previewMode, rawMode, rawDraft]);
+  }, [conflict, draftBody, draftStorageKey, editorMode, fmDraft, onWrite, path]);
 
   const handleChangeKind = useCallback(
     async (newKind: PageKind) => {
@@ -342,7 +599,46 @@ export function WikiPageView({
           </Button>
         )}
         <div className="min-w-0 flex-1">
-          <h2 className="truncate text-base font-semibold leading-tight">{title}</h2>
+          <div className="flex min-w-0 items-center gap-2" data-testid="tome-page-title-row">
+            <h2 className="min-w-0 truncate text-base font-semibold leading-tight">{title}</h2>
+            {isEditing && draftStatus && (
+              <p
+                className="min-w-0 truncate rounded bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-700 dark:text-emerald-300"
+                data-testid="tome-draft-status"
+              >
+                <span>{draftStatus}</span>
+                {draftSavedAt && (
+                  <>
+                    {" · Last saved "}
+                    <time dateTime={draftSavedAt}>
+                      {new Date(draftSavedAt).toLocaleTimeString(undefined, {
+                        hour: "numeric",
+                        minute: "2-digit",
+                        second: "2-digit",
+                      })}
+                    </time>
+                  </>
+                )}
+              </p>
+            )}
+            {dynamicWarning && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge
+                    variant="outline"
+                    className="shrink-0 cursor-help gap-1 border-amber-300 bg-amber-50 text-[10px] font-medium normal-case text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300"
+                    data-testid="tome-dynamic-warning"
+                  >
+                    <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                    Agent rewrites on ingest
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="max-w-80 whitespace-normal text-[11px]">
+                  {dynamicWarning}
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </div>
           <div className="flex min-w-0 items-center gap-1.5">
             {renaming ? (
               <input
@@ -360,20 +656,20 @@ export function WikiPageView({
                 }}
                 onBlur={() => setRenaming(false)}
                 className="block w-full max-w-md rounded border border-input bg-background px-1 py-0.5 font-mono text-[11px] text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                aria-label="Rename page path (Enter to save, Esc to cancel)"
+                aria-label="Rename page file name (Enter to save, Esc to cancel)"
               />
             ) : onRename && canEdit && !locked ? (
               <button
                 type="button"
                 onClick={startRename}
-                title="Rename page"
+                title="Rename page file name"
                 className="min-w-0 truncate font-mono text-[11px] text-muted-foreground hover:text-foreground hover:underline"
               >
-                {path}
+                {filename}
               </button>
             ) : (
               <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
-                {path}
+                {filename}
               </span>
             )}
             {lastRevision && onOpenHistory && !isEditing && (
@@ -483,49 +779,50 @@ export function WikiPageView({
             </>
           )}
           {isEditing ? (
-            <div className="flex items-center divide-x divide-border rounded-md border border-border">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={handleToggleRawMode}
-                    disabled={saving || previewMode}
-                    aria-pressed={rawMode}
-                    className={cn(
-                      "flex items-center gap-1 px-2.5 py-1 text-xs font-medium transition-colors first:rounded-l-md last:rounded-r-md",
-                      rawMode
-                        ? "bg-muted text-foreground"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                    )}
-                  >
-                    <Code className="h-3.5 w-3.5" />
-                    {rawMode ? "Rich" : "Raw"}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" className="text-xs">
-                  {rawMode ? "Switch to rich editor" : "Edit raw markdown"}
-                </TooltipContent>
-              </Tooltip>
-              <button
-                type="button"
-                onClick={handleTogglePreview}
+            <div className="flex items-center gap-1">
+              <MarkdownEditorModeToggle
+                value={editorMode}
+                options={MARKDOWN_DOCUMENT_EDITOR_MODES}
+                onChange={handleModeChange}
                 disabled={saving}
-                aria-pressed={previewMode}
-                className={cn(
-                  "flex items-center gap-1 px-2.5 py-1 text-xs font-medium transition-colors",
-                  previewMode
-                    ? "bg-muted text-foreground"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                )}
-              >
-                {previewMode ? <Pencil className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                {previewMode ? "Edit" : "Preview"}
-              </button>
+                ariaLabel="Tome editor mode"
+                testId="tome-editor-mode-toggle"
+              />
+              {editorMode !== "preview" && (
+                <AiAssistButton
+                  task="tome-inline-markdown"
+                  label="AI"
+                  getContext={inlineAiContext}
+                  onApply={applyInlineAi}
+                  presets={[
+                    "Continue writing here",
+                    "Make the selection concise",
+                    "Add a supporting bullet list",
+                  ]}
+                  disabled={saving}
+                  triggerTestId="tome-inline-ai"
+                  open={inlineAiOpen}
+                  onOpenChange={handleInlineAiOpenChange}
+                />
+              )}
+              {editorMode === "source" && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1 px-2 text-xs"
+                  onClick={() => setMediaOpen(true)}
+                  disabled={saving}
+                >
+                  <ImagePlus className="h-3.5 w-3.5" aria-hidden="true" />
+                  Media
+                </Button>
+              )}
               <button
                 type="button"
                 onClick={handleCancel}
                 disabled={saving}
-                className="px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground first:rounded-l-md last:rounded-r-md"
+                className="rounded-md px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
                 Cancel
               </button>
@@ -533,7 +830,7 @@ export function WikiPageView({
                 type="button"
                 onClick={handleSave}
                 disabled={saving}
-                className="rounded-r-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+                className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
               >
                 {saving ? "Saving…" : "Save"}
               </button>
@@ -542,7 +839,7 @@ export function WikiPageView({
             <ViewOnlyTooltip viewOnly={!canEdit}>
               <button
                 type="button"
-                onClick={() => setIsEditing(true)}
+                onClick={startEditing}
                 disabled={locked || !canEdit || isMirror}
                 title={
                   isMirror
@@ -576,12 +873,6 @@ export function WikiPageView({
           {error}
         </p>
       )}
-      {dynamicWarning && (
-        <p className="border-b border-amber-300 bg-amber-50 px-5 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300">
-          {dynamicWarning}
-        </p>
-      )}
-
       {isGlossary && (
         <>
           <GlossaryFields
@@ -628,30 +919,114 @@ export function WikiPageView({
             "ring-2 ring-inset ring-amber-400/70 dark:ring-amber-700/60",
         )}
       >
-        <div className={cn(!isEditing && wideReading && "wide-reading")}>
-          {isEditing && rawMode && !previewMode ? (
-            <div className="milkdown-host h-full">
-              <textarea
-                className="raw-markdown-editor"
+        <div
+          className={cn(
+            isEditing && editorMode === "rich" && "tome-rich-editor-full-width",
+            !isEditing && wideReading && "wide-reading",
+          )}
+        >
+          {isEditing && editorMode === "source" ? (
+            <div
+              className="h-full min-h-[28rem] p-3"
+              onPasteCapture={handleSourcePaste}
+            >
+              <RichCodeEditor
+                editorRef={sourceEditorRef}
                 value={rawDraft}
-                onChange={(e) => setRawDraft(e.target.value)}
-                spellCheck={false}
-                aria-label="Raw markdown editor"
+                onChange={(nextMarkdown) => {
+                  setRawDraft(nextMarkdown);
+                  const [nextFrontmatter] = parseFrontmatter(nextMarkdown);
+                  setFmDraft(nextFrontmatter as Record<string, FrontmatterValue>);
+                }}
+                filename={path}
+                language="markdown"
+                wrap
+                fillContainer
+                lintSource={(value) => diagnoseTomeMarkdown(value, { knownPaths })}
+                className="h-full"
               />
             </div>
+          ) : isEditing && previewMode ? (
+            <MarkdownRenderer
+              content={draftBody}
+              variant="final"
+              className="tome-document-preview px-8 py-6"
+              onInternalLink={onNavigate}
+              glossaryPreview={glossaryPreview}
+              enableExternalEmbeds
+              enableTomeColumns
+            />
+          ) : !isEditing ? (
+            <MarkdownRenderer
+              content={body}
+              variant="final"
+              className="tome-document-preview px-8 py-6"
+              onInternalLink={onNavigate}
+              glossaryPreview={glossaryPreview}
+              enableExternalEmbeds
+              enableTomeColumns
+            />
           ) : (
             <CrepeEditor
               key={`${slug}-${path}-${editorEpoch}`}
               ref={editorRef}
-              initialMarkdown={isEditing ? richInitialBody : body}
-              readonly={!isEditing || previewMode}
+              initialMarkdown={richInitialBody}
+              readonly={false}
+              onChange={(nextBody) => setRawDraft(serializeFrontmatter(fmDraft, nextBody))}
               onNavigate={onNavigate}
               glossaryPreview={glossaryPreview}
               hideHtmlComments
+              onInsertMedia={() => setMediaOpen(true)}
+              onEnhanceSelection={() => handleInlineAiOpenChange(true)}
+              enableColumns
             />
           )}
         </div>
       </ScrollArea>
+      <TomeMediaInsertDialog
+        open={mediaOpen}
+        onOpenChange={setMediaOpen}
+        onInsert={insertMediaMarkdown}
+      />
+      <Dialog open={conflict !== null} onOpenChange={(open) => !open && setConflict(null)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Resolve editing conflict</DialogTitle>
+            <DialogDescription>
+              {conflict?.currentAuthor
+                ? `${conflict.currentAuthor} saved a newer revision while you were editing.`
+                : "A newer revision was saved while you were editing."}
+              {" "}Review both versions before choosing which one should become the next revision.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid max-h-[55vh] gap-3 overflow-auto md:grid-cols-2">
+            <div className="min-w-0">
+              <p className="mb-1 text-xs font-semibold uppercase text-muted-foreground">Your draft</p>
+              <pre className="whitespace-pre-wrap rounded-md border bg-muted/40 p-3 text-xs">{rawDraft}</pre>
+            </div>
+            <div className="min-w-0">
+              <p className="mb-1 text-xs font-semibold uppercase text-muted-foreground">Latest saved version</p>
+              <pre className="whitespace-pre-wrap rounded-md border bg-muted/40 p-3 text-xs">{conflict?.currentMarkdown}</pre>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setConflict(null);
+                handleCancel();
+                void onReload();
+              }}
+            >
+              Reload latest
+            </Button>
+            <Button type="button" onClick={() => void forceSave()} disabled={saving}>
+              Keep my version as new revision
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

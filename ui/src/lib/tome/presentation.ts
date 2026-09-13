@@ -1,8 +1,10 @@
 import { parseFrontmatter, SPEC_BY_PATH } from "@/lib/tome/schema";
 import { stripAgentHtmlComments } from "@/lib/tome/wiki-export";
 
-export const PRESENTATION_SOURCE_SCOPES = ["current", "selected", "wiki"] as const;
+export const PRESENTATION_SOURCE_SCOPES = ["current", "selected", "wiki", "gist"] as const;
 export type PresentationSourceScope = (typeof PRESENTATION_SOURCE_SCOPES)[number];
+
+const GIST_SOURCE_PREFIX = "@gist/";
 
 export const PRESENTATION_TONES = ["executive", "conversational", "formal", "persuasive"] as const;
 export type PresentationTone = (typeof PRESENTATION_TONES)[number];
@@ -173,7 +175,7 @@ export function buildPresentationPrompt(
 ): string {
   const sourceLines = sourceManifest.map((source) => `- ${source.title} (${source.path})`);
   return [
-    "Create an editable presentation grounded in the attached TOME wiki pages.",
+    "Create an editable presentation grounded in the attached TOME sources.",
     "",
     "Presentation requirements:",
     requiredLine("Goal", requirements.goal),
@@ -188,10 +190,10 @@ export function buildPresentationPrompt(
     requiredLine("Visual and branding preferences", requirements.visualPreferences),
     `- Speaker notes: ${requirements.includeSpeakerNotes ? "include" : "omit"}`,
     "",
-    "Selected wiki sources:",
+    "Selected TOME sources:",
     ...(sourceLines.length > 0 ? sourceLines : ["- No sources selected"]),
     "",
-    "Use concise slide copy. Cite source page paths on every source-backed bullet. Mark synthesis, recommendations, and other unsupported additions as generated. Do not invent facts.",
+    "Use concise slide copy. Cite source references on every source-backed bullet. Mark synthesis, recommendations, and other unsupported additions as generated. Do not invent facts.",
   ].join("\n");
 }
 
@@ -201,6 +203,24 @@ export function presentationSourceFromPage(path: string, markdown: string): Pres
     ? frontmatter.title.trim()
     : (SPEC_BY_PATH.get(path)?.title ?? path);
   return { path, title, content: stripAgentHtmlComments(body) };
+}
+
+/** Stable source reference used for a gist throughout generation and export. */
+export function presentationGistSourcePath(id: string): string {
+  return `${GIST_SOURCE_PREFIX}${id.trim()}`;
+}
+
+/** Build a sanitized presentation source from an authorized gist. */
+export function presentationSourceFromGist(
+  id: string,
+  title: string,
+  markdown: string,
+): PresentationSource {
+  return {
+    path: presentationGistSourcePath(id),
+    title: title.trim() || "Gist",
+    content: stripAgentHtmlComments(markdown),
+  };
 }
 
 function objectValue(value: unknown, label: string): Record<string, unknown> {
@@ -338,9 +358,13 @@ export function presentationSourceRefs(slide: PresentationSlide): string[] {
   ])];
 }
 
-/** Build a canonical, safely encoded URL for a page included in an exported presentation. */
+/** Build a canonical, safely encoded URL for a TOME source included in an export. */
 export function presentationSourceUrl(sourceBaseUrl: string, path: string): string {
   const baseUrl = sourceBaseUrl.endsWith("/") ? sourceBaseUrl : `${sourceBaseUrl}/`;
+  if (path.startsWith(GIST_SOURCE_PREFIX)) {
+    const gistId = path.slice(GIST_SOURCE_PREFIX.length).trim();
+    return new URL(`../gists/${encodeURIComponent(gistId)}`, baseUrl).toString();
+  }
   const encodedPath = path
     .split("/")
     .filter((segment) => segment && segment !== "." && segment !== "..")

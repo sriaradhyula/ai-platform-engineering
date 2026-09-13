@@ -7,7 +7,7 @@
 // `[...path]` is the page path under the project, e.g. `charter.md` or
 // `repos/mycelium/overview.md`.
 
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 import {
   ApiError,
@@ -22,6 +22,7 @@ import { AGENT_IDENTITIES } from "@/lib/tome/agent-identities";
 import { parseFrontmatter } from "@/lib/tome/schema";
 import { SPEC_BY_PATH } from "@/lib/tome/schema";
 import type { PageKind, PageResponse } from "@/types/tome";
+import { currentLiveRevision, hasPageEditConflict } from "@/lib/tome/revision-conflict";
 
 export const dynamic = "force-dynamic";
 
@@ -67,12 +68,37 @@ export const PUT = withErrorHandler(async (request: NextRequest, ctx: Ctx) => {
   const body = (await request.json().catch(() => ({}))) as {
     markdown?: string;
     message?: string;
+    base_revision_id?: string | null;
+    force?: boolean;
   };
   if (typeof body.markdown !== "string") {
     throw new ApiError("`markdown` (string) is required", 400, "BAD_REQUEST");
   }
 
   const store = await getPageStore();
+  if (body.base_revision_id !== undefined && !body.force) {
+    if (body.base_revision_id !== null && typeof body.base_revision_id !== "string") {
+      throw new ApiError("`base_revision_id` must be a string or null", 400, "BAD_REQUEST");
+    }
+    const history = await store.pageHistory(tctx.projectId, pagePath);
+    const latest = currentLiveRevision(history);
+    const latestId = latest?._id ? String(latest._id) : null;
+    if (hasPageEditConflict(history, body.base_revision_id)) {
+      return NextResponse.json(
+        {
+          error: "This page changed after you started editing.",
+          code: "PAGE_EDIT_CONFLICT",
+          data: {
+            current_revision_id: latestId,
+            current_markdown: latest?.markdown ?? "",
+            current_author: latest?.author ?? null,
+            current_created_at: latest?.created_at ?? null,
+          },
+        },
+        { status: 409 },
+      );
+    }
+  }
   await store.writePage(tctx.projectId, pagePath, body.markdown, {
     message: body.message || `edit ${pagePath}`,
     author: tctx.user.email ?? AGENT_IDENTITIES.default,

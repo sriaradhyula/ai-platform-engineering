@@ -40,12 +40,46 @@ export const TOME_COLLECTIONS = {
   GITHUB_REPO_SYNCS: "tome_github_repo_sync",
   /** Gists — lightweight, non-wiki context chunks. */
   GISTS: "tome_gists",
+  /** Stable wiki folder identities and hierarchy metadata. */
+  FOLDERS: "tome_folders",
+  /** Durable page parent/order metadata, independent of Markdown bodies and URLs. */
+  PAGE_PLACEMENTS: "tome_page_placements",
   /** Recurring Webex meeting occurrences and their transcript/run lifecycle. */
   WEBEX_MEETING_OCCURRENCES: "tome_webex_meeting_occurrences",
 } as const;
 
 export type TomeCollectionName =
   (typeof TOME_COLLECTIONS)[keyof typeof TOME_COLLECTIONS];
+
+/** A durable folder. Page bodies remain independent and retain stable URLs. */
+export interface TomeFolder {
+  id: string;
+  project_id: string;
+  parent_id: string | null;
+  /** Display name; renaming does not rewrite page content or URLs. */
+  name: string;
+  /** Case-folded key used to enforce sibling-name uniqueness. */
+  name_key: string;
+  /** Original path association used to place existing path-based pages. */
+  source_path: string | null;
+  order: number;
+  owner_subject: string;
+  permission_scope: "project";
+  created_at: Date;
+  updated_at: Date;
+  updated_by: string;
+}
+
+/** Sidebar placement for a page; moving it does not rename or rewrite the file. */
+export interface TomePagePlacement {
+  project_id: string;
+  path: string;
+  folder_id: string | null;
+  order: number;
+  created_at: Date;
+  updated_at: Date;
+  updated_by: string;
+}
 
 // ---------------------------------------------------------------------------
 // Page kind / node kind
@@ -509,6 +543,8 @@ export interface Gist {
   _id?: string;
   project_id: string;
   title: string;
+  /** Flat display filename; the immutable gist ID remains the URL identity. */
+  filename?: string;
   /** Markdown body. */
   body: string;
   author: string; // email of the creator
@@ -517,6 +553,19 @@ export interface Gist {
   updated_at?: Date;
   updated_by?: string;
   /** Freeform labels for lightweight filtering — no hierarchy, unlike wiki paths. */
+  tags?: string[];
+}
+
+/** Browser/API representation of a Tome gist. */
+export interface GistRecord {
+  id: string;
+  title: string;
+  filename: string;
+  body: string;
+  author: string;
+  created_at: string;
+  updated_at?: string;
+  updated_by?: string;
   tags?: string[];
 }
 
@@ -531,6 +580,10 @@ export interface PageTreeNode {
   kind: NodeKind;
   order: number;
   children: PageTreeNode[];
+  /** Present for persisted folder nodes. */
+  folderId?: string;
+  /** Persisted parent for either a page placement or folder hierarchy node. */
+  parentFolderId?: string | null;
 }
 
 /** GET …/pages/[...path] response. */

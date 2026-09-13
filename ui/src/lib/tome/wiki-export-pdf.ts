@@ -118,7 +118,9 @@ function inlineText(tokens: Token[] | undefined): string {
         case "image":
           return `[Image: ${token.text || token.title || "image"}] ${token.href}`;
         case "html":
-          return token.text.replace(/<[^>]+>/g, "");
+          return /^<br\s*\/?\s*>$/i.test(token.text.trim())
+            ? "\n"
+            : token.text.replace(/<[^>]+>/g, "");
         default:
           return "text" in token && typeof token.text === "string" ? token.text : "";
       }

@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import dynamic from "next/dynamic";
 import { usePathname } from "next/navigation";
 import {
   useCallback,
@@ -13,10 +12,13 @@ import {
 import {
   Activity,
   ArrowUpRight,
+  ChevronRight,
   Eye,
   EyeOff,
+  FilePlus2,
   FileText,
   FolderKanban,
+  FolderPlus,
   HelpCircle,
   Layers,
   LayoutTemplate,
@@ -30,15 +32,15 @@ import {
   Newspaper,
   Plus,
   RefreshCw,
+  Search,
   Settings,
+  Sparkles,
   Target,
   Upload,
-  UserX,
-  Users,
+  X,
 } from "lucide-react";
 
 import { HeaderBreadcrumbPortal } from "@/components/layout/HeaderBreadcrumbSlot";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -50,11 +52,6 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Tooltip,
@@ -68,8 +65,16 @@ import { GistsPanel } from "@/components/tome/GistsPanel";
 import { GistView } from "@/components/tome/GistView";
 import { TomeLoading } from "@/components/tome/TomeLoading";
 import { ProjectSettingsPanel } from "@/components/tome/ProjectSettingsPanel";
+import {
+  ProjectDescription,
+  ProjectMetadataInfo,
+} from "@/components/tome/ProjectDescription";
 import { OnboardingModal } from "@/components/tome/OnboardingModal";
-import { WikiSidebar } from "@/components/tome/WikiSidebar";
+import {
+  WikiSidebar,
+  type WikiNavigationItem,
+  type WikiNavigationTarget,
+} from "@/components/tome/WikiSidebar";
 import { WikiPageView } from "@/components/tome/WikiPageView";
 import { WikiExportMenu } from "@/components/tome/WikiExportMenu";
 import type { GlossaryPreview } from "@/components/tome/CrepeEditor";
@@ -89,6 +94,10 @@ import { Breadcrumb, type Crumb } from "@/components/tome/Breadcrumb";
 import { McpConnectDialog } from "@/components/tome/McpConnectDialog";
 import { TomeProductFeedback } from "@/components/tome/TomeProductFeedback";
 import { ViewOnlyTooltip } from "@/components/tome/ViewOnlyTooltip";
+import {
+  DeleteFolderDialog,
+  DeletePageDialog,
+} from "@/components/tome/DeletePageDialog";
 import { parseFrontmatter, SPEC_BY_PATH } from "@/lib/tome/schema";
 import {
   isSupportedTomeImportPath,
@@ -101,8 +110,9 @@ import {
 } from "@/lib/tome/issue-filter-views";
 import { cn } from "@/lib/utils";
 import { getProjectsNavigationLabel } from "@/lib/navigation-labels";
+import { buildPageCreationAgentPrompt } from "@/lib/tome/page-creation";
 import { useUnsavedChangesStore } from "@/store/unsaved-changes-store";
-import type { PageTreeNode } from "@/types/tome";
+import type { PageTreeNode, TomeFolder } from "@/types/tome";
 import {
   dataStewardLabel,
   isSynthesizedType,
@@ -110,18 +120,21 @@ import {
   type ProjectType,
 } from "@/types/projects";
 
-const EdgeGraphDialog = dynamic(
-  () => import("@/components/tome/EdgeGraphDialog").then((module) => module.EdgeGraphDialog),
-  { ssr: false },
-);
-
 interface PagesResponse {
   slug: string;
   tree: PageTreeNode[];
   pages: Record<string, string>;
+  folders: Array<Pick<TomeFolder, "id" | "parent_id" | "name" | "source_path" | "order">>;
   canEdit: boolean;
   canManageSteward: boolean;
 }
+
+type FolderDialogState = {
+  mode: "create" | "edit";
+  folderId?: string;
+  name: string;
+  parentId: string | null;
+};
 
 /** An edge authored in another project, pointing at this one. */
 interface IncomingEdge {
@@ -143,10 +156,12 @@ type MainView =
   | { kind: "issues"; label?: string }
   | { kind: "feed" }
   | { kind: "gists" }
+  | { kind: "newGist" }
   | { kind: "gist"; id: string }
   | { kind: "settings" }
   | { kind: "templates" }
   | { kind: "insights" }
+  | { kind: "folder"; id: string }
   | { kind: "page"; path: string }
   | { kind: "pageHistory"; path: string }
   | { kind: "ingest" }
@@ -175,6 +190,8 @@ function viewToPath(slug: string, view: MainView): string {
       return `${base}/feed`;
     case "gists":
       return `${base}/gists`;
+    case "newGist":
+      return `${base}/gists/new`;
     case "gist":
       return `${base}/gists/${encodeURIComponent(view.id)}`;
     case "settings":
@@ -183,6 +200,8 @@ function viewToPath(slug: string, view: MainView): string {
       return `${base}/templates`;
     case "insights":
       return `${base}/insights`;
+    case "folder":
+      return `${base}/folders/${encodeURIComponent(view.id)}`;
     case "ingest":
       return `${base}/ingest`;
     case "ingestRun":
@@ -215,13 +234,19 @@ function pathToView(segments: string[]): MainView {
     case "feed":
       return { kind: "feed" };
     case "gists":
-      return rest[0] ? { kind: "gist", id: rest[0] } : { kind: "gists" };
+      return rest[0] === "new"
+        ? { kind: "newGist" }
+        : rest[0]
+          ? { kind: "gist", id: rest[0] }
+          : { kind: "gists" };
     case "settings":
       return { kind: "settings" };
     case "templates":
       return { kind: "templates" };
     case "insights":
       return { kind: "insights" };
+    case "folders":
+      return rest[0] ? { kind: "folder", id: rest[0] } : { kind: "agent" };
     case "ingest":
       return rest[0]
         ? rest[1] === "review"
@@ -291,6 +316,7 @@ export function TomeWiki({ slug }: { slug: string }) {
   const [error, setError] = useState<string | null>(null);
   const [artifactPath, setArtifactPath] = useState<string | null>(null);
   const [showHidden, setShowHidden] = useState(false);
+  const [wikiQuery, setWikiQuery] = useState("");
   // First-run onboarding: project title (for the modal copy) + open state.
   const [projectTitle, setProjectTitle] = useState<string | null>(null);
   const [projectMeta, setProjectMeta] = useState<{
@@ -391,9 +417,25 @@ export function TomeWiki({ slug }: { slug: string }) {
     { slug: string; title: string; projectCount: number }[]
   >([]);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
-  // "New page" popover + hidden file picker for the Wiki rail action cluster.
+  // "New page" dialog + hidden file picker for the Wiki rail action cluster.
   const [newPageOpen, setNewPageOpen] = useState(false);
   const [newPageName, setNewPageName] = useState("");
+  const [newPageParentFolder, setNewPageParentFolder] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
+  const [autoEditPath, setAutoEditPath] = useState<string | null>(null);
+  const [agentPrefill, setAgentPrefill] = useState<string | null>(null);
+  const [folderDialog, setFolderDialog] = useState<FolderDialogState | null>(null);
+  const [folderError, setFolderError] = useState<string | null>(null);
+  const [savingFolder, setSavingFolder] = useState(false);
+  const [pagePendingDelete, setPagePendingDelete] = useState<string | null>(null);
+  const [deletingPage, setDeletingPage] = useState(false);
+  const [folderPendingDelete, setFolderPendingDelete] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
+  const [deletingFolder, setDeletingFolder] = useState(false);
   const [importing, setImporting] = useState(false);
   const newPageInputRef = useRef<HTMLInputElement | null>(null);
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
@@ -708,7 +750,7 @@ export function TomeWiki({ slug }: { slug: string }) {
     };
   }, [slug]);
 
-  // Show the first-run walkthrough once per browser. The Help button reopens it.
+  // Show the first-run walkthrough once per browser. The TOME home help button reopens it.
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!window.localStorage.getItem(ONBOARDING_SEEN_KEY)) {
@@ -725,6 +767,10 @@ export function TomeWiki({ slug }: { slug: string }) {
 
   const openPage = useCallback(
     (path: string) => navigate({ kind: "page", path }),
+    [navigate],
+  );
+  const openFolder = useCallback(
+    (id: string) => navigate({ kind: "folder", id }),
     [navigate],
   );
   const openArtifact = useCallback((path: string) => setArtifactPath(path), []);
@@ -773,16 +819,104 @@ export function TomeWiki({ slug }: { slug: string }) {
   );
 
   const loading = data === null && !error;
-  const isEmpty = data !== null && Object.keys(data.pages).length === 0;
+  const isEmpty = data !== null && Object.keys(data.pages).length === 0 && data.tree.length === 0;
+  const knownPagePaths = useMemo(
+    () => new Set(Object.keys(data?.pages ?? {})),
+    [data?.pages],
+  );
+  const folderParentOptions = useMemo(() => {
+    const folders = data?.folders ?? [];
+    const excluded = new Set<string>();
+    if (folderDialog?.folderId) {
+      excluded.add(folderDialog.folderId);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const folder of folders) {
+          if (folder.parent_id && excluded.has(folder.parent_id) && !excluded.has(folder.id)) {
+            excluded.add(folder.id);
+            changed = true;
+          }
+        }
+      }
+    }
+    const byId = new Map(folders.map((folder) => [folder.id, folder]));
+    return folders
+      .filter((folder) => !excluded.has(folder.id))
+      .map((folder) => {
+        const names = [folder.name];
+        let parentId = folder.parent_id;
+        const visited = new Set([folder.id]);
+        while (parentId && !visited.has(parentId)) {
+          visited.add(parentId);
+          const parent = byId.get(parentId);
+          if (!parent) break;
+          names.unshift(parent.name);
+          parentId = parent.parent_id;
+        }
+        return { id: folder.id, label: names.join(" / ") };
+      })
+      .sort((left, right) => left.label.localeCompare(right.label));
+  }, [data?.folders, folderDialog?.folderId]);
+  const filteredWikiTree = useMemo(() => {
+    const query = wikiQuery.trim().toLocaleLowerCase();
+    if (!query) return data?.tree ?? [];
+    const filterNodes = (nodes: PageTreeNode[]): PageTreeNode[] => nodes.flatMap((node) => {
+      if (`${node.title} ${node.path}`.toLocaleLowerCase().includes(query)) return [node];
+      const children = filterNodes(node.children);
+      return children.length > 0 ? [{ ...node, children }] : [];
+    });
+    return filterNodes(data?.tree ?? []);
+  }, [data?.tree, wikiQuery]);
+  const activeFolderNode = useMemo(() => {
+    if (view.kind !== "folder") return null;
+    const findFolder = (nodes: PageTreeNode[]): PageTreeNode | null => {
+      for (const node of nodes) {
+        if (node.folderId === view.id) return node;
+        const match = findFolder(node.children);
+        if (match) return match;
+      }
+      return null;
+    };
+    return findFolder(data?.tree ?? []);
+  }, [data?.tree, view]);
 
   const writeMarkdown = useCallback(
-    async (path: string, markdown: string, message: string) => {
+    async (
+      path: string,
+      markdown: string,
+      message: string,
+      options?: { baseRevisionId?: string | null; force?: boolean },
+    ) => {
       const res = await fetch(`/api/tome/projects/${slug}/pages/${path}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ markdown, message }),
+        body: JSON.stringify({
+          markdown,
+          message,
+          base_revision_id: options?.baseRevisionId,
+          force: options?.force,
+        }),
       });
-      if (!res.ok) throw new Error(`save failed (${res.status})`);
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        if (res.status === 409 && payload?.code === "PAGE_EDIT_CONFLICT") {
+          const conflict = new Error(payload.error) as Error & {
+            code: string;
+            currentRevisionId: string | null;
+            currentMarkdown: string;
+            currentAuthor: string | null;
+            currentCreatedAt: string | null;
+          };
+          conflict.code = payload.code;
+          conflict.currentRevisionId = payload.data?.current_revision_id ?? null;
+          conflict.currentMarkdown = payload.data?.current_markdown ?? "";
+          conflict.currentAuthor = payload.data?.current_author ?? null;
+          conflict.currentCreatedAt = payload.data?.current_created_at ?? null;
+          throw conflict;
+        }
+        throw new Error(payload?.error || `save failed (${res.status})`);
+      }
       setData((prev) =>
         prev ? { ...prev, pages: { ...prev.pages, [path]: markdown } } : prev,
       );
@@ -793,50 +927,197 @@ export function TomeWiki({ slug }: { slug: string }) {
   // Create a page from a (possibly nested) path. Adds .md if no extension,
   // seeds an H1 from the leaf name, then opens it. Backed by PUT /pages.
   const createPage = useCallback(
-    async (rawPath: string) => {
+    async (
+      rawPath: string,
+      options: { parentFolderId?: string | null; openEditor?: boolean } = {},
+    ) => {
       let path = rawPath.trim().replace(/^\/+/, "");
       if (!path) return;
       if (!/\.(md|mdx)$/i.test(path)) path += ".md";
       if (data?.pages[path] !== undefined) {
+        if (options.openEditor) setAutoEditPath(path);
         openPage(path);
         return;
       }
       const leaf = path.replace(/\.(md|mdx)$/i, "").split("/").pop() ?? path;
       try {
         await writeMarkdown(path, `# ${leaf}\n`, `create ${path}`);
+        if (options.parentFolderId) {
+          const moveResponse = await fetch(
+            `/api/tome/projects/${encodeURIComponent(slug)}/navigation`,
+            {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                item: { kind: "page", id: path },
+                target: {
+                  position: "inside",
+                  item: { kind: "folder", id: options.parentFolderId },
+                },
+              }),
+            },
+          );
+          const moveBody = await moveResponse.json().catch(() => null);
+          if (!moveResponse.ok) {
+            setError(moveBody?.error ?? `Page placement failed (${moveResponse.status})`);
+          }
+        }
         await load();
+        if (options.openEditor) setAutoEditPath(path);
         openPage(path);
       } catch (e) {
         setError(String((e as Error)?.message ?? e));
       }
     },
-    [data, writeMarkdown, load, openPage],
+    [data, load, openPage, slug, writeMarkdown],
   );
 
-  const deletePage = useCallback(
-    async (path: string) => {
-      if (typeof window !== "undefined" && !window.confirm(`Remove ${path}?`))
-        return;
-      try {
-        const res = await fetch(`/api/tome/projects/${slug}/pages/${path}`, {
-          method: "DELETE",
-        });
-        if (!res.ok) throw new Error(`delete failed (${res.status})`);
-        // Leave any view that was showing the now-deleted page.
-        if (
-          (view.kind === "page" || view.kind === "pageHistory") &&
-          view.path === path
-        ) {
-          navigate({ kind: "agent" });
-        }
-        setArtifactPath((p) => (p === path ? null : p));
-        await load();
-      } catch (e) {
-        setError(String((e as Error)?.message ?? e));
+  const openNewPage = useCallback((folder?: PageTreeNode) => {
+    setNewPageParentFolder(
+      folder?.folderId ? { id: folder.folderId, title: folder.title } : null,
+    );
+    setNewPageName("");
+    setNewPageOpen(true);
+  }, []);
+
+  const promptAgentForPage = useCallback((rawPath: string) => {
+    if (!rawPath.trim()) return;
+    setAgentPrefill(buildPageCreationAgentPrompt({
+      projectSlug: slug,
+      rawPath,
+      folderId: newPageParentFolder?.id,
+      folders: data?.folders ?? [],
+    }));
+    setNewPageOpen(false);
+    setNewPageName("");
+    setNewPageParentFolder(null);
+    navigate({ kind: "agent" });
+  }, [data?.folders, navigate, newPageParentFolder, slug]);
+
+  const deletePage = useCallback((path: string) => {
+    setPagePendingDelete(path);
+  }, []);
+
+  const confirmDeletePage = useCallback(async () => {
+    if (!pagePendingDelete || deletingPage) return;
+    const path = pagePendingDelete;
+    setDeletingPage(true);
+    try {
+      const res = await fetch(`/api/tome/projects/${slug}/pages/${path}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error(`delete failed (${res.status})`);
+      // Leave any view that was showing the now-deleted page.
+      if (
+        (view.kind === "page" || view.kind === "pageHistory") &&
+        view.path === path
+      ) {
+        navigate({ kind: "agent" });
       }
-    },
-    [slug, load, view, navigate],
-  );
+      setArtifactPath((currentPath) => (currentPath === path ? null : currentPath));
+      setPagePendingDelete(null);
+      await load();
+    } catch (e) {
+      setError(String((e as Error)?.message ?? e));
+    } finally {
+      setDeletingPage(false);
+    }
+  }, [deletingPage, load, navigate, pagePendingDelete, slug, view]);
+
+  const openCreateFolder = useCallback((parentId: string | null = null) => {
+    setFolderError(null);
+    setFolderDialog({ mode: "create", name: "", parentId });
+  }, []);
+
+  const openEditFolder = useCallback((node: PageTreeNode) => {
+    if (!node.folderId) return;
+    setFolderError(null);
+    setFolderDialog({
+      mode: "edit",
+      folderId: node.folderId,
+      name: node.title,
+      parentId: node.parentFolderId ?? null,
+    });
+  }, []);
+
+  const saveFolder = useCallback(async () => {
+    if (!folderDialog || !folderDialog.name.trim()) return;
+    setSavingFolder(true);
+    setFolderError(null);
+    try {
+      const editing = folderDialog.mode === "edit" && Boolean(folderDialog.folderId);
+      const url = editing
+        ? `/api/tome/projects/${encodeURIComponent(slug)}/folders/${encodeURIComponent(folderDialog.folderId!)}`
+        : `/api/tome/projects/${encodeURIComponent(slug)}/folders`;
+      const response = await fetch(url, {
+        method: editing ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: folderDialog.name.trim(),
+          parent_id: folderDialog.parentId,
+        }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.error ?? `Folder save failed (${response.status})`);
+      setFolderDialog(null);
+      await load();
+    } catch (saveError) {
+      setFolderError(saveError instanceof Error ? saveError.message : "Could not save folder");
+    } finally {
+      setSavingFolder(false);
+    }
+  }, [folderDialog, load, slug]);
+
+  const deleteWikiFolder = useCallback((folderId: string) => {
+    const folder = data?.folders.find((candidate) => candidate.id === folderId);
+    if (!folder) return;
+    setFolderPendingDelete({ id: folder.id, name: folder.name });
+  }, [data?.folders]);
+
+  const confirmDeleteWikiFolder = useCallback(async () => {
+    if (!folderPendingDelete || deletingFolder) return;
+    const folder = folderPendingDelete;
+    setDeletingFolder(true);
+    try {
+      const response = await fetch(
+        `/api/tome/projects/${encodeURIComponent(slug)}/folders/${encodeURIComponent(folder.id)}`,
+        { method: "DELETE" },
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.error ?? `Folder delete failed (${response.status})`);
+      if (view.kind === "folder" && view.id === folder.id) navigate({ kind: "agent" });
+      setFolderPendingDelete(null);
+      await load();
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Could not delete folder");
+    } finally {
+      setDeletingFolder(false);
+    }
+  }, [deletingFolder, folderPendingDelete, load, navigate, slug, view]);
+
+  const moveWikiItem = useCallback(async (
+    item: WikiNavigationItem,
+    target: WikiNavigationTarget,
+  ) => {
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/tome/projects/${encodeURIComponent(slug)}/navigation`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ item, target }),
+        },
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.error ?? `Move failed (${response.status})`);
+      }
+      await load();
+    } catch (moveError) {
+      setError(moveError instanceof Error ? moveError.message : "Could not move item");
+    }
+  }, [load, slug]);
 
   // Rename a page: write its markdown to the new path, then tombstone the old
   // one (there's no move endpoint). History starts fresh on the new path.
@@ -929,6 +1210,11 @@ export function TomeWiki({ slug }: { slug: string }) {
         return [{ label: "Activity" }];
       case "gists":
         return [{ label: "Gists" }];
+      case "newGist":
+        return [
+          { label: "Gists", onClick: () => navigate({ kind: "gists" }) },
+          { label: "New gist" },
+        ];
       case "gist":
         return [
           { label: "Gists", onClick: () => navigate({ kind: "gists" }) },
@@ -940,24 +1226,58 @@ export function TomeWiki({ slug }: { slug: string }) {
         return [{ label: "Templates" }];
       case "insights":
         return [{ label: "Insights" }];
+      case "folder": {
+        const folders = data?.folders ?? [];
+        const byId = new Map(folders.map((folder) => [folder.id, folder]));
+        const chain: typeof folders = [];
+        let cursor = byId.get(view.id);
+        const visited = new Set<string>();
+        while (cursor && !visited.has(cursor.id)) {
+          visited.add(cursor.id);
+          chain.unshift(cursor);
+          cursor = cursor.parent_id ? byId.get(cursor.parent_id) : undefined;
+        }
+        return chain.map((folder, index) => index < chain.length - 1
+          ? { label: folder.name, onClick: () => navigate({ kind: "folder", id: folder.id }) }
+          : { label: folder.name });
+      }
       case "page": {
         const pages = data?.pages ?? {};
         const md = pages[view.path] ?? "";
         const segments = view.path.split("/");
-        const folders = segments.slice(0, -1); // ancestor folders, leaf excluded
         const crumbs: Crumb[] = [];
-        let prefix = "";
-        for (const seg of folders) {
-          prefix = prefix ? `${prefix}/${seg}` : seg;
+        const directory = segments.slice(0, -1).join("/");
+        const persisted = data?.folders ?? [];
+        const byId = new Map(persisted.map((folder) => [folder.id, folder]));
+        const directFolder = persisted.find((folder) => folder.source_path === directory);
+        const folderChain: typeof persisted = [];
+        let cursor = directFolder;
+        const visited = new Set<string>();
+        while (cursor && !visited.has(cursor.id)) {
+          visited.add(cursor.id);
+          folderChain.unshift(cursor);
+          cursor = cursor.parent_id ? byId.get(cursor.parent_id) : undefined;
+        }
+        const fallbackFolders = segments.slice(0, -1).map((segment, index) => ({
+          id: `path-${index}`,
+          parent_id: null,
+          name: segment,
+          source_path: segments.slice(0, index + 1).join("/"),
+          order: index,
+        }));
+        for (const folder of folderChain.length > 0 ? folderChain : fallbackFolders) {
+          const prefix = folder.source_path;
           // Clickable to the folder's landing page if one exists (nest-parent
           // `<folder>.md`, or a conventional index/overview under it).
-          const indexPath = [`${prefix}.md`, `${prefix}/index.md`, `${prefix}/overview.md`].find(
-            (p) => pages[p] !== undefined,
-          );
+          const indexPath = prefix
+            ? [`${prefix}.md`, `${prefix}/index.md`, `${prefix}/overview.md`].find(
+                (path) => pages[path] !== undefined,
+              )
+            : undefined;
           crumbs.push(
             indexPath
-              ? { label: seg, onClick: () => navigate({ kind: "page", path: indexPath }) }
-              : { label: seg },
+              ? { label: folder.name, onClick: () => navigate({ kind: "page", path: indexPath }) }
+              : { label: folder.name },
           );
         }
         crumbs.push({ label: pageTitleOf(view.path, md) });
@@ -1062,7 +1382,7 @@ export function TomeWiki({ slug }: { slug: string }) {
     standup: view.kind === "standup",
     issues: view.kind === "issues" && !view.label,
     feed: view.kind === "feed",
-    gists: view.kind === "gists" || view.kind === "gist",
+    gists: view.kind === "gists" || view.kind === "newGist" || view.kind === "gist",
     settings: view.kind === "settings",
     templates: view.kind === "templates",
     insights: view.kind === "insights",
@@ -1070,6 +1390,7 @@ export function TomeWiki({ slug }: { slug: string }) {
       view.kind === "ingest" || view.kind === "ingestRun" || view.kind === "draftReview",
     page:
       view.kind === "page" || view.kind === "pageHistory" ? view.path : null,
+    folder: view.kind === "folder" ? view.id : null,
   };
 
   const feedbackPagePath =
@@ -1119,84 +1440,40 @@ export function TomeWiki({ slug }: { slug: string }) {
               </div>
             ) : (
               <>
-                <h1 className="text-lg font-semibold leading-tight">
-                  {projectTitle ?? slug}
-                </h1>
-                {projectMeta.description && (
-                  <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-                    {projectMeta.description}
-                  </p>
-                )}
-                <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                  {/* No type badge here: the breadcrumb's own page segment now
-                      carries the same icon+color (Target+primary for BHAG,
-                      Layers+sky for Area) — see `hierarchyCrumbs` and the
-                      project-title crumb above — so it isn't duplicated here.
-                      BHAG/Area membership (what this page belongs to) is also
-                      a breadcrumb segment now instead of a chip cluster. */}
-                  {projectMeta.teamName && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Badge variant="outline" className="gap-1">
-                          <Users className="h-3 w-3" />
-                          Shared with: {projectMeta.teamName}
-                        </Badge>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom">
-                        Members of this team have direct view access. Access can also be inherited
-                        through the BHAG and Area hierarchy.
-                      </TooltipContent>
-                    </Tooltip>
-                  )}
-                  {projectMeta.dataSteward ? (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Badge variant="outline" className="gap-1">
-                          <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[8px] font-semibold text-primary">
-                            {projectMeta.dataSteward.split("@")[0].split(/[.\-_]/).slice(0, 2).map((p: string) => p[0]?.toUpperCase()).join("")}
-                          </span>
-                          {projectMeta.dataSteward.split("@")[0]}
-                        </Badge>
-                      </TooltipTrigger>
-                      <TooltipContent>Data steward: {projectMeta.dataSteward}</TooltipContent>
-                    </Tooltip>
-                  ) : (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Badge variant="outline" className="gap-1 text-muted-foreground">
-                          <UserX className="h-3 w-3" />
-                          No data steward
-                        </Badge>
-                      </TooltipTrigger>
-                      <TooltipContent>No data steward assigned. Set one in project settings.</TooltipContent>
-                    </Tooltip>
-                  )}
-                  {projectMeta.tags.map((tag) => (
-                    <Badge key={tag} variant="outline">
-                      {tag}
-                    </Badge>
-                  ))}
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <h1 className="truncate text-lg font-semibold leading-tight">
+                    {projectTitle ?? slug}
+                  </h1>
+                  <ProjectMetadataInfo
+                    teamName={projectMeta.teamName}
+                    dataSteward={projectMeta.dataSteward}
+                    tags={projectMeta.tags}
+                  />
                 </div>
+                {projectMeta.description && (
+                  <ProjectDescription description={projectMeta.description} />
+                )}
               </>
             )}
           </div>
           <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1">
             <TomeProductFeedback projectSlug={slug} pagePath={feedbackPagePath} />
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground"
-                  onClick={() => setOnboardingOpen(true)}
-                  aria-label="What is TOME?"
-                >
-                  <HelpCircle className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">What is TOME?</TooltipContent>
-            </Tooltip>
-            <EdgeGraphDialog slug={slug} />
+            {view.kind === "agent" && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-muted-foreground"
+                    onClick={() => setOnboardingOpen(true)}
+                    aria-label="What is TOME?"
+                  >
+                    <HelpCircle className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">What is TOME?</TooltipContent>
+              </Tooltip>
+            )}
             <McpConnectDialog />
             <Button
               variant="outline"
@@ -1437,6 +1714,17 @@ export function TomeWiki({ slug }: { slug: string }) {
                     {!loading && canEdit && (
                       <button
                         type="button"
+                        onClick={() => openCreateFolder(null)}
+                        title="New folder"
+                        aria-label="New folder"
+                        className="rounded p-1 hover:bg-muted hover:text-foreground"
+                      >
+                        <FolderPlus className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    {!loading && canEdit && (
+                      <button
+                        type="button"
                         onClick={() => uploadInputRef.current?.click()}
                         title="Import Markdown, text, HTML, DOCX, or PDF files"
                         aria-label="Import pages"
@@ -1451,7 +1739,7 @@ export function TomeWiki({ slug }: { slug: string }) {
                       </button>
                     )}
                     {!loading && canEdit && (
-                      <Popover
+                      <Dialog
                         open={newPageOpen}
                         onOpenChange={(o) => {
                           setNewPageOpen(o);
@@ -1459,58 +1747,64 @@ export function TomeWiki({ slug }: { slug: string }) {
                             setTimeout(() => newPageInputRef.current?.focus(), 0);
                           } else {
                             setNewPageName("");
+                            setNewPageParentFolder(null);
                           }
                         }}
                       >
-                        <PopoverTrigger asChild>
+                        <DialogTrigger asChild>
                           <button
                             type="button"
                             title="New page"
                             aria-label="New page"
+                            onClick={() => openNewPage()}
                             className="rounded p-1 hover:bg-muted hover:text-foreground"
                           >
                             <Plus className="h-3.5 w-3.5" />
                           </button>
-                        </PopoverTrigger>
-                        <PopoverContent align="end" side="bottom" className="w-72 p-3">
+                        </DialogTrigger>
+                        <DialogContent className="sm:max-w-md">
+                          <DialogHeader>
+                            <DialogTitle>
+                              {newPageParentFolder
+                                ? `New page in ${newPageParentFolder.title}`
+                                : "New wiki page"}
+                            </DialogTitle>
+                            <DialogDescription>
+                              Enter a page name, then draft it in the editor or ask the agent to help.
+                            </DialogDescription>
+                          </DialogHeader>
                           <form
                             onSubmit={(e) => {
                               e.preventDefault();
                               const name = newPageName.trim();
                               if (!name) return;
-                              void createPage(name);
+                              void createPage(name, {
+                                parentFolderId: newPageParentFolder?.id,
+                                openEditor: true,
+                              });
                               setNewPageOpen(false);
                               setNewPageName("");
                             }}
-                            className="space-y-2"
+                            className="space-y-4"
                           >
-                            <label
-                              htmlFor="tome-new-page-input"
-                              className="text-[11px] font-semibold text-foreground"
-                            >
-                              New page path
-                            </label>
-                            <Input
-                              id="tome-new-page-input"
-                              ref={newPageInputRef}
-                              value={newPageName}
-                              onChange={(e) => setNewPageName(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Escape") {
-                                  e.preventDefault();
-                                  setNewPageOpen(false);
-                                  setNewPageName("");
-                                }
-                              }}
-                              placeholder="objectives/q3.md"
-                              className="h-8 font-mono text-xs"
-                              aria-label="New page path"
-                            />
-                            <p className="text-[10px] leading-snug text-muted-foreground">
-                              Use <span className="font-mono">/</span> to nest into folders, e.g.{" "}
-                              <span className="font-mono">objectives/q3.md</span>.
-                            </p>
-                            <div className="flex items-center justify-between gap-2 pt-1">
+                            <div className="space-y-2">
+                              <label
+                                htmlFor="tome-new-page-input"
+                                className="block text-sm font-medium text-foreground"
+                              >
+                                Page name
+                              </label>
+                              <Input
+                                id="tome-new-page-input"
+                                ref={newPageInputRef}
+                                value={newPageName}
+                                onChange={(e) => setNewPageName(e.target.value)}
+                                placeholder="new-page.md"
+                                className="font-mono text-sm"
+                                aria-label="New page name"
+                              />
+                            </div>
+                            <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
                               <button
                                 type="button"
                                 onClick={() => {
@@ -1518,21 +1812,57 @@ export function TomeWiki({ slug }: { slug: string }) {
                                   setNewPageName("");
                                   uploadInputRef.current?.click();
                                 }}
-                                className="inline-flex items-center gap-1 rounded px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground"
+                                className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
                               >
-                                <Upload className="h-3.5 w-3.5" />
+                                <Upload className="h-4 w-4" />
                                 Import instead
                               </button>
-                              <Button type="submit" size="sm" className="h-7 px-2.5 text-[11px]" disabled={!newPageName.trim()}>
-                                Create
-                              </Button>
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={!newPageName.trim()}
+                                  onClick={() => promptAgentForPage(newPageName)}
+                                >
+                                  <Sparkles className="h-4 w-4" />
+                                  Ask agent
+                                </Button>
+                                <Button type="submit" size="sm" disabled={!newPageName.trim()}>
+                                  Write in editor
+                                </Button>
+                              </div>
                             </div>
                           </form>
-                        </PopoverContent>
-                      </Popover>
+                        </DialogContent>
+                      </Dialog>
                     )}
                   </div>
                 </div>
+
+                {!loading && !isEmpty && (
+                  <div className="relative mx-2 mb-2">
+                    <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <input
+                      type="search"
+                      value={wikiQuery}
+                      onChange={(event) => setWikiQuery(event.target.value)}
+                      placeholder="Search pages and folders"
+                      aria-label="Search wiki pages and folders"
+                      className="h-8 w-full rounded-md border bg-background pl-7 pr-7 text-xs outline-none transition focus:border-primary/50 focus:ring-2 focus:ring-primary/15 [&::-webkit-search-cancel-button]:hidden"
+                    />
+                    {wikiQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setWikiQuery("")}
+                        aria-label="Clear wiki search"
+                        className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                )}
 
                 <input
                   ref={uploadInputRef}
@@ -1562,14 +1892,25 @@ export function TomeWiki({ slug }: { slug: string }) {
                       </Button>
                     </ViewOnlyTooltip>
                   </div>
+                ) : filteredWikiTree.length === 0 ? (
+                  <p className="px-2 py-2 text-xs text-muted-foreground">
+                    No pages or folders match “{wikiQuery.trim()}”.
+                  </p>
                 ) : (
                   data && (
                     <WikiSidebar
-                      tree={data.tree}
+                      tree={filteredWikiTree}
                       selectedPath={navActive.page}
+                      selectedFolderId={navActive.folder}
                       onSelect={openPage}
+                      onSelectFolder={openFolder}
                       showHidden={showHidden}
                       onDelete={canEdit ? deletePage : undefined}
+                      onCreateFolder={canEdit ? openCreateFolder : undefined}
+                      onCreatePage={canEdit ? openNewPage : undefined}
+                      onEditFolder={canEdit ? openEditFolder : undefined}
+                      onDeleteFolder={canEdit ? deleteWikiFolder : undefined}
+                      onMoveItem={canEdit ? moveWikiItem : undefined}
                     />
                   )
                 )}
@@ -1694,6 +2035,8 @@ export function TomeWiki({ slug }: { slug: string }) {
                     onPagesChanged={load}
                     onOpenPage={openArtifact}
                     glossaryPreview={glossaryPreview}
+                    initialPrompt={agentPrefill}
+                    onInitialPromptConsumed={() => setAgentPrefill(null)}
                   />
                 </div>
                 {artifactPath && (
@@ -1712,6 +2055,7 @@ export function TomeWiki({ slug }: { slug: string }) {
                         glossaryPreview={glossaryPreview}
                         onRename={canEdit ? renamePage : undefined}
                         canEdit={canEdit}
+                        knownPaths={knownPagePaths}
                       />
                     ) : (
                       <TomeLoading />
@@ -1756,6 +2100,17 @@ export function TomeWiki({ slug }: { slug: string }) {
                   slug={slug}
                   canEdit={canEdit}
                   onOpenGist={(id) => navigate({ kind: "gist", id })}
+                  onNewGist={() => navigate({ kind: "newGist" })}
+                />
+              </div>
+            ) : view.kind === "newGist" ? (
+              <div className="min-w-0 flex-1">
+                <GistView
+                  key="new-gist"
+                  slug={slug}
+                  canEdit={canEdit}
+                  onBack={() => navigate({ kind: "gists" })}
+                  onCreated={(id) => navigate({ kind: "gist", id })}
                 />
               </div>
             ) : view.kind === "gist" ? (
@@ -1824,6 +2179,75 @@ export function TomeWiki({ slug }: { slug: string }) {
                   }}
                 />
               </div>
+            ) : view.kind === "folder" ? (
+              <div className="min-w-0 flex-1 overflow-auto p-8">
+                {activeFolderNode ? (
+                  <div className="mx-auto max-w-4xl">
+                    <div className="flex items-start justify-between gap-4 border-b pb-5">
+                      <div>
+                        <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          <FolderKanban className="h-4 w-4" />
+                          Folder
+                        </div>
+                        <h2 className="text-3xl font-semibold tracking-tight">{activeFolderNode.title}</h2>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          {activeFolderNode.children.length} {activeFolderNode.children.length === 1 ? "item" : "items"}
+                        </p>
+                      </div>
+                      {canEdit && (
+                        <div className="flex items-center gap-2">
+                          <Button variant="outline" onClick={() => openEditFolder(activeFolderNode)}>
+                            Edit folder
+                          </Button>
+                          <Button variant="outline" onClick={() => openNewPage(activeFolderNode)}>
+                            <FilePlus2 className="h-4 w-4" />
+                            New page
+                          </Button>
+                          <Button onClick={() => openCreateFolder(activeFolderNode.folderId ?? null)}>
+                            <FolderPlus className="h-4 w-4" />
+                            New subfolder
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                    {activeFolderNode.children.length === 0 ? (
+                      <div className="py-16 text-center text-sm text-muted-foreground">
+                        This folder is empty. Add a subfolder or move content here.
+                      </div>
+                    ) : (
+                      <div className="divide-y">
+                        {activeFolderNode.children.map((child) => (
+                          <button
+                            key={child.path}
+                            type="button"
+                            onClick={() => child.kind === "folder" && child.folderId
+                              ? openFolder(child.folderId)
+                              : openPage(child.path)}
+                            className="flex w-full items-center gap-3 px-2 py-4 text-left transition-colors hover:bg-muted/60"
+                          >
+                            {child.kind === "folder" ? (
+                              <FolderKanban className="h-5 w-5 shrink-0 text-primary" />
+                            ) : (
+                              <FileText className="h-5 w-5 shrink-0 text-muted-foreground" />
+                            )}
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate font-medium">{child.title}</span>
+                              <span className="block truncate text-xs text-muted-foreground">
+                                {child.kind === "folder"
+                                  ? `${child.children.length} ${child.children.length === 1 ? "item" : "items"}`
+                                  : child.path}
+                              </span>
+                            </span>
+                            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Folder not found.</p>
+                )}
+              </div>
             ) : view.kind === "pageHistory" ? (
               <div className="min-w-0 flex-1">
                 <PageHistoryView
@@ -1856,6 +2280,9 @@ export function TomeWiki({ slug }: { slug: string }) {
                     glossaryPreview={glossaryPreview}
                     onRename={canEdit ? renamePage : undefined}
                     canEdit={canEdit}
+                    knownPaths={knownPagePaths}
+                    autoStartEditing={autoEditPath === view.path}
+                    onAutoStartEditing={() => setAutoEditPath(null)}
                   />
                 ) : (
                   <p className="p-8 text-sm text-muted-foreground">Page not found.</p>
@@ -1865,6 +2292,104 @@ export function TomeWiki({ slug }: { slug: string }) {
           </main>
         </div>
       </div>
+
+      <Dialog
+        open={folderDialog !== null}
+        onOpenChange={(open) => {
+          if (!open && !savingFolder) {
+            setFolderDialog(null);
+            setFolderError(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveFolder();
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>
+                {folderDialog?.mode === "edit" ? "Edit folder" : "New folder"}
+              </DialogTitle>
+              <DialogDescription>
+                Folder names and hierarchy are independent from page URLs and Markdown content.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <label htmlFor="tome-folder-name" className="text-sm font-medium">
+                  Name
+                </label>
+                <Input
+                  id="tome-folder-name"
+                  value={folderDialog?.name ?? ""}
+                  onChange={(event) => setFolderDialog((current) =>
+                    current ? { ...current, name: event.target.value } : current,
+                  )}
+                  placeholder="Planning"
+                  maxLength={120}
+                  autoFocus
+                />
+              </div>
+              <div className="space-y-2">
+                <label htmlFor="tome-folder-parent" className="text-sm font-medium">
+                  Parent folder
+                </label>
+                <select
+                  id="tome-folder-parent"
+                  value={folderDialog?.parentId ?? ""}
+                  onChange={(event) => setFolderDialog((current) =>
+                    current
+                      ? { ...current, parentId: event.target.value || null }
+                      : current,
+                  )}
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <option value="">Wiki root</option>
+                  {folderParentOptions.map((folder) => (
+                    <option key={folder.id} value={folder.id}>{folder.label}</option>
+                  ))}
+                </select>
+              </div>
+              {folderError && (
+                <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                  {folderError}
+                </p>
+              )}
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setFolderDialog(null)}
+                disabled={savingFolder}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={savingFolder || !folderDialog?.name.trim()}>
+                {savingFolder && <Loader2 className="h-4 w-4 animate-spin" />}
+                {folderDialog?.mode === "edit" ? "Save changes" : "Create folder"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <DeletePageDialog
+        path={pagePendingDelete}
+        deleting={deletingPage}
+        onCancel={() => setPagePendingDelete(null)}
+        onConfirm={() => void confirmDeletePage()}
+      />
+
+      <DeleteFolderDialog
+        name={folderPendingDelete?.name ?? null}
+        deleting={deletingFolder}
+        onCancel={() => setFolderPendingDelete(null)}
+        onConfirm={() => void confirmDeleteWikiFolder()}
+      />
 
       <OnboardingModal
         open={onboardingOpen}

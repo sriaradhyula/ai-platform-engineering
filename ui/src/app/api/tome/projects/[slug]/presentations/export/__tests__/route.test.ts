@@ -8,6 +8,7 @@ afterAll(() => Object.defineProperty(process.release, "name", releaseNameDescrip
 
 const mockLoadTomeProject = jest.fn();
 const mockListPages = jest.fn();
+const mockFindGist = jest.fn();
 
 jest.mock("@/lib/tome/tome-api", () => ({
   loadTomeProject: (...args: unknown[]) => mockLoadTomeProject(...args),
@@ -15,6 +16,11 @@ jest.mock("@/lib/tome/tome-api", () => ({
 jest.mock("@/lib/tome/page-store", () => ({
   getPageStore: jest.fn().mockImplementation(async () => ({
     listPages: (...args: unknown[]) => mockListPages(...args),
+  })),
+}));
+jest.mock("@/lib/tome/mongo-collections", () => ({
+  getTomeGistsCollection: jest.fn().mockImplementation(async () => ({
+    findOne: (...args: unknown[]) => mockFindGist(...args),
   })),
 }));
 
@@ -25,8 +31,48 @@ const originalTomePublicOrigin = process.env.TOME_PUBLIC_ORIGIN;
 const originalNextAuthUrl = process.env.NEXTAUTH_URL;
 
 beforeEach(() => {
+  jest.clearAllMocks();
   delete process.env.TOME_PUBLIC_ORIGIN;
   delete process.env.NEXTAUTH_URL;
+});
+
+it("exports a gist-backed presentation with a canonical gist source link", async () => {
+  mockLoadTomeProject.mockResolvedValue({
+    projectId: "project-1",
+    project: { title: "Example Project" },
+  });
+  mockListPages.mockResolvedValue({});
+  mockFindGist.mockResolvedValue({ _id: "gist-1", project_id: "project-1" });
+  const response = await POST(new NextRequest(
+    "http://example.test/api/tome/projects/example-project/presentations/export",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        format: "html",
+        gist_id: "gist-1",
+        deck: {
+          title: "Gist briefing",
+          subtitle: "",
+          slides: [{
+            id: "gist",
+            title: "Gist",
+            subtitle: "",
+            bullets: [{ text: "Fact", source_refs: ["@gist/gist-1"], generated: false }],
+            visual: null,
+            speaker_notes: "",
+          }],
+        },
+      }),
+    },
+  ), context);
+
+  expect(response.status).toBe(200);
+  expect(await response.text()).toContain(
+    "href=\"http://example.test/projects/example-project/tome/gists/gist-1\"",
+  );
+  expect(mockFindGist).toHaveBeenCalledWith({ _id: "gist-1", project_id: "project-1" });
+  expect(mockListPages).not.toHaveBeenCalled();
 });
 
 afterEach(() => {

@@ -11,6 +11,7 @@ import { NextRequest } from "next/server";
 import { withErrorHandler } from "@/lib/api-middleware";
 import { requireAgentToken, resolveProject } from "@/lib/tome/internal-api";
 import { getTomeGistsCollection } from "@/lib/tome/mongo-collections";
+import { defaultGistFilename } from "@/lib/tome/gists";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +32,7 @@ export const GET = withErrorHandler(async (request: NextRequest, ctx: Ctx) => {
       gist: {
         id: String(g._id),
         title: g.title,
+        filename: g.filename ?? defaultGistFilename(g.title),
         body: g.body,
         author: g.author,
         created_at: g.created_at,
@@ -49,6 +51,7 @@ export const GET = withErrorHandler(async (request: NextRequest, ctx: Ctx) => {
     gists: rows.map((g) => ({
       id: String(g._id),
       title: g.title,
+      filename: g.filename ?? defaultGistFilename(g.title),
       author: g.author,
       created_at: g.created_at,
       updated_at: g.updated_at,
