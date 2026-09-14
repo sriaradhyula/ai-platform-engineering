@@ -17,6 +17,9 @@ import { auditTome, tomeActorFromAuth } from "@/lib/tome/audit";
 import { getPageStore } from "@/lib/tome/page-store";
 import { buildTree } from "@/lib/tome/schema";
 import { seedGreenfieldIfEmpty } from "@/lib/tome/seed";
+import { ensureFoldersForPages, listFolders } from "@/lib/tome/folder-store";
+import { AGENT_IDENTITIES } from "@/lib/tome/agent-identities";
+import { ensurePagePlacements, listPagePlacements } from "@/lib/tome/navigation-store";
 
 export const dynamic = "force-dynamic";
 
@@ -24,13 +27,35 @@ type Ctx = { params: Promise<{ slug: string }> };
 
 export const GET = withErrorHandler(async (request: NextRequest, ctx: Ctx) => {
   const { slug } = await ctx.params;
-  const { projectId, canEdit, canManageSteward } = await loadTomeProject(request, slug);
+  const tctx = await loadTomeProject(request, slug);
+  const { projectId, canEdit, canManageSteward } = tctx;
 
   const store = await getPageStore();
   const pages = await store.listPages(projectId);
-  const tree = buildTree(pages);
+  await ensureFoldersForPages(
+    projectId,
+    Object.keys(pages),
+    tctx.user.email ?? AGENT_IDENTITIES.default,
+  );
+  const folders = await listFolders(projectId);
+  await ensurePagePlacements(
+    projectId,
+    pages,
+    folders,
+    tctx.user.email ?? AGENT_IDENTITIES.default,
+  );
+  const placements = await listPagePlacements(projectId);
+  const tree = buildTree(pages, folders, placements);
 
-  return successResponse({ slug, tree, pages, canEdit, canManageSteward });
+  return successResponse({
+    slug,
+    tree,
+    pages,
+    folders,
+    placements,
+    canEdit,
+    canManageSteward,
+  });
 });
 
 export const POST = withErrorHandler(async (request: NextRequest, ctx: Ctx) => {

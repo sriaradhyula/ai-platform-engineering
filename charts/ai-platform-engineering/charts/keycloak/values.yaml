@@ -5,7 +5,7 @@ image:
   tag: "26.3"
   pullPolicy: IfNotPresent
 
-# Init container image used by post-install Jobs (init-idp + init-token-exchange).
+# Init container image used by the Keycloak reconciliation Jobs.
 #
 # Default points at our project image — `build/Dockerfile.keycloak-init` —
 # which is wolfi-base + python-3.13 + curl + sed + grep + awk. We need
@@ -360,6 +360,36 @@ userProfile:
         edit: ["admin"]
     - name: webex_user_id
       displayName: "Webex User ID"
+      permissions:
+        view: ["admin"]
+        edit: ["admin"]
+    - name: caipe_secondary_oidc_identity_key
+      displayName: "CAIPE Secondary OIDC Identity Key"
+      permissions:
+        view: ["admin"]
+        edit: ["admin"]
+    - name: caipe_secondary_oidc_provider_id
+      displayName: "CAIPE Secondary OIDC Provider ID"
+      permissions:
+        view: ["admin"]
+        edit: ["admin"]
+    - name: caipe_secondary_oidc_issuer
+      displayName: "CAIPE Secondary OIDC Issuer"
+      permissions:
+        view: ["admin"]
+        edit: ["admin"]
+    - name: caipe_secondary_oidc_sub
+      displayName: "CAIPE Secondary OIDC Subject"
+      permissions:
+        view: ["admin"]
+        edit: ["admin"]
+    - name: caipe_secondary_oidc_email
+      displayName: "CAIPE Secondary OIDC Email"
+      permissions:
+        view: ["admin"]
+        edit: ["admin"]
+    - name: caipe_secondary_oidc_linked_at
+      displayName: "CAIPE Secondary OIDC Linked At"
       permissions:
         view: ["admin"]
         edit: ["admin"]

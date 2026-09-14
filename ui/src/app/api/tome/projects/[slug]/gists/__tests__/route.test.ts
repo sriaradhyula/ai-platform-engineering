@@ -63,6 +63,7 @@ describe("POST Tome gist", () => {
         _id: expect.any(String),
         project_id: "project-1",
         title: "Example gist",
+        filename: "example-gist.md",
         body: "Useful context",
         author: "reader@example.test",
         tags: ["example"],
@@ -80,6 +81,7 @@ describe("POST Tome gist", () => {
       data: {
         gist: {
           title: "Example gist",
+          filename: "example-gist.md",
           author: "reader@example.test",
           tags: ["example"],
         },

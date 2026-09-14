@@ -39,6 +39,7 @@ from tome_agent.agent.loop import (
 from tome_agent.agent.issue_context import format_issue_context
 from tome_agent.orchestrator.contract import ChatEventPayload, IssueContext, ProjectSnapshot
 from tome_agent.reports import schema as report_schema
+from tome_agent.tracing import rename_current_span
 
 log = logging.getLogger("tome_agent.agent.chat")
 
@@ -240,6 +241,37 @@ async def stream_chat(
             async with ClaudeSDKClient(options=_options(resume)) as client:
                 await client.query(prompt)
                 async for message in client.receive_response():
+                    if not state.get("span_renamed"):
+                        trace_name = (
+                            f"Tome - {snapshot.name}" if snapshot.name else "Tome Agent"
+                        )[:200]
+                        rename_current_span(
+                            trace_name,
+                            user_id=actor_email,
+                            session_id=sdk_session_id,
+                            metadata={
+                                "tome_actor_email": actor_email or "",
+                                "tome_project_id": snapshot.project_id,
+                                "tome_project_slug": snapshot.slug,
+                                "tome_project_name": snapshot.name,
+                                "tome_project_type": snapshot.project_type,
+                                "tome_bhag_or_area": (
+                                    snapshot.name
+                                    if snapshot.project_type in {"bhag", "area"}
+                                    else ""
+                                ),
+                                "tome_operation": "chat",
+                                "tome_sdk_operation": (
+                                    "ClaudeAgentSDK.ClaudeSDKClient.receive_response"
+                                ),
+                            },
+                            tags=[
+                                "tome",
+                                f"tome:{snapshot.project_type}",
+                                "tome:chat",
+                            ],
+                        )
+                        state["span_renamed"] = True
                     if isinstance(message, ResultMessage):
                         state["result_seen"] = True
                     async for event in _translate(message, model, model_provenance):

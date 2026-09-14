@@ -153,6 +153,7 @@ function markdownRenderer(): Marked {
       // Raw HTML in a wiki page is displayed as source in exports. This keeps
       // downloaded HTML inert even when a page contains script/event markup.
       html({ text }) {
+        if (/^<br\s*\/?\s*>$/i.test(text.trim())) return "<br>";
         return `<pre class="raw-html"><code>${escapeHtml(text)}</code></pre>`;
       },
       link({ href, title, tokens }) {

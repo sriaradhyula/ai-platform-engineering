@@ -47,6 +47,26 @@ describe("Keycloak admin user helpers", () => {
     expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining("/users"), expect.objectContaining({ method: "POST" }));
   });
 
+  it("returns every exact owner of a custom user attribute", async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce(response({ access_token: "token", expires_in: 300 }))
+      .mockResolvedValueOnce(response([
+        { id: "user-1", attributes: { caipe_secondary_oidc_identity_key: ["digest"] } },
+        { id: "user-2", attributes: { caipe_secondary_oidc_identity_key: ["digest"] } },
+        { id: "partial", attributes: { caipe_secondary_oidc_identity_key: ["digest-extra"] } },
+      ]));
+
+    const { findRealmUserIdsByAttribute } = await import("../keycloak-admin");
+
+    await expect(
+      findRealmUserIdsByAttribute("caipe_secondary_oidc_identity_key", "digest")
+    ).resolves.toEqual(["user-1", "user-2"]);
+    expect(global.fetch).toHaveBeenLastCalledWith(
+      "http://keycloak/admin/realms/caipe/users?q=caipe_secondary_oidc_identity_key%3Adigest&max=100",
+      expect.objectContaining({ method: "GET" })
+    );
+  });
+
   it("creates a passwordless verified placeholder when a bootstrap email has not logged in yet", async () => {
     (global.fetch as jest.Mock)
       .mockResolvedValueOnce(response({ access_token: "token", expires_in: 300 }))

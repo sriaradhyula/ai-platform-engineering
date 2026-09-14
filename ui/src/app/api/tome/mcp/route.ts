@@ -17,8 +17,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { getTomeAuthFromBearerOrSession } from "@/lib/tome/auth";
-import { TOME_MCP_OIDC_PROOF_HEADER } from "@/lib/tome/oidc-jwt";
+import { getMcpAuthFromBearerOrSession } from "@/lib/auth/mcp-auth";
+import { SECONDARY_OIDC_PROOF_HEADER } from "@/lib/auth/secondary-oidc";
 import { requireInteractiveTomePrincipal } from "@/lib/tome/principal";
 import { isTomeServerEnabled } from "@/lib/tome/guard";
 
@@ -155,11 +155,11 @@ function forwardHeaders(request: NextRequest): Record<string, string> {
   const auth = request.headers.get("Authorization");
   const cookie = request.headers.get("cookie");
   const tomeApiKey = request.headers.get("x-caipe-token");
-  const oidcProof = request.headers.get(TOME_MCP_OIDC_PROOF_HEADER);
+  const oidcProof = request.headers.get(SECONDARY_OIDC_PROOF_HEADER);
   if (auth) h.Authorization = auth;
   if (cookie) h.cookie = cookie;
   if (tomeApiKey) h["X-Caipe-Token"] = tomeApiKey;
-  if (oidcProof) h[TOME_MCP_OIDC_PROOF_HEADER] = oidcProof;
+  if (oidcProof) h[SECONDARY_OIDC_PROOF_HEADER] = oidcProof;
   return h;
 }
 
@@ -373,6 +373,24 @@ function autoIngestView(project: any): Record<string, unknown> {
 }
 
 const TOOLS: ToolDef[] = [
+  {
+    name: "tome_server_info",
+    description:
+      "Show the TOME MCP server name and version. If this is the only available tool, sign in to the CAIPE portal once with the same corporate email, then reconnect so your Circuit identity can be linked.",
+    inputSchema: schema({}),
+    handler: async () =>
+      toolText(
+        JSON.stringify(
+          {
+            ...SERVER_INFO,
+            identity_linking:
+              "A CAIPE profile is required before project tools become available.",
+          },
+          null,
+          2,
+        ),
+      ),
+  },
   {
     name: "tome_list_projects",
     description:
@@ -987,7 +1005,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "tome_get_page_history",
     description:
-      "List a wiki page's revision history (newest first) — author, message, timestamp, whether it came from an ingest run (`report_id`), and whether it reverted a prior revision. Use the returned revision `id` with `tome_revert_page` to roll back. `project_slug` and `page_path` are required.",
+      "Get a wiki page's revision history (newest first), including the explicit `current_revision_id` and each revision's live, draft, or rejected status. Use a returned revision `id` with `tome_revert_page`, or use a report-less draft with `tome_resolve_page_draft`. `project_slug` and `page_path` are required.",
     inputSchema: schema({ project_slug: STR, page_path: STR }, ["project_slug", "page_path"]),
     handler: async (_req, fwd, args) => {
       const slug = encodeURIComponent(String(args.project_slug));
@@ -997,7 +1015,46 @@ const TOOLS: ToolDef[] = [
         await fwd("GET", `/api/tome/projects/${slug}/history/${encodedPath}`),
         "get page history",
       );
-      return toolText(JSON.stringify(data?.revisions ?? [], null, 2));
+      return toolText(JSON.stringify({
+        path: data?.path ?? pagePath,
+        current_revision_id: data?.current_revision_id ?? null,
+        revisions: data?.revisions ?? [],
+      }, null, 2));
+    },
+  },
+  {
+    name: "tome_resolve_page_draft",
+    description:
+      "Publish or reject one report-less legacy page draft. First call `tome_get_page_history`, then pass its exact `current_revision_id` as `base_revision_id` (or null when no live revision exists); a stale publish fails with a conflict. Report-backed drafts must use `tome_approve_ingest_draft` or `tome_reject_ingest_draft`. Requires editor access. `project_slug`, `revision_id`, `action`, and `base_revision_id` are required.",
+    inputSchema: schema(
+      {
+        project_slug: STR,
+        revision_id: STR,
+        action: { type: "string", enum: ["publish", "reject"] },
+        base_revision_id: {
+          anyOf: [{ type: "string" }, { type: "null" }],
+          description: "The current_revision_id returned by tome_get_page_history, or null.",
+        },
+      },
+      ["project_slug", "revision_id", "action", "base_revision_id"],
+    ),
+    handler: async (_req, fwd, args) => {
+      if (!Object.prototype.hasOwnProperty.call(args, "base_revision_id")) {
+        throw new Error(
+          "base_revision_id is required; get it from tome_get_page_history",
+        );
+      }
+      const slug = encodeURIComponent(String(args.project_slug));
+      const revisionId = encodeURIComponent(String(args.revision_id));
+      const data = ensureOk(
+        await fwd("POST", `/api/tome/projects/${slug}/revisions/${revisionId}/resolve`, {
+          action: String(args.action),
+          base_revision_id:
+            args.base_revision_id === null ? null : String(args.base_revision_id),
+        }),
+        "resolve page draft",
+      );
+      return toolText(JSON.stringify(data, null, 2));
     },
   },
   {
@@ -1304,7 +1361,7 @@ const TOOLS: ToolDef[] = [
   {
     name: "tome_list_gists",
     description:
-      "List a project's gists — lightweight, non-wiki context chunks (a prompt, a snippet, a deploy note) saved without becoming part of the curated wiki. Returns id, title, author, created_at, tags, and a url for each (not the full body — use tome_get_gist for that). `project_slug` is required; `tag` optionally filters to gists carrying that exact tag.",
+      "List a project's gists — lightweight, non-wiki context chunks (a prompt, a snippet, a deploy note) saved without becoming part of the curated wiki. Returns id, title, filename, author, created_at, tags, and a url for each (not the full body — use tome_get_gist for that). `project_slug` is required; `tag` optionally filters to gists carrying that exact tag.",
     inputSchema: schema({ project_slug: STR, tag: STR }, ["project_slug"]),
     handler: async (request, fwd, args) => {
       const slug = encodeURIComponent(String(args.project_slug));
@@ -1314,6 +1371,7 @@ const TOOLS: ToolDef[] = [
       const gists = (data?.gists ?? []).map((g: any) => ({
         id: g.id,
         title: g.title,
+        filename: g.filename,
         author: g.author,
         created_at: g.created_at,
         tags: g.tags ?? [],
@@ -1348,15 +1406,22 @@ const TOOLS: ToolDef[] = [
   {
     name: "tome_create_gist",
     description:
-      "Save a new gist to a project — a quick, non-committal chunk of context (an agent memory, a working prompt, a config incantation). It is NOT ingested into the wiki and NOT loaded into agent context by default; it's a stored, linkable chunk a teammate can pull in on demand. Automatically posted to the project's Feed as a linkable reference so it's discoverable — sharing isn't a separate step. Returns a url to view the gist; share that with the user. `project_slug`, `title`, and `body` (markdown) are required; `tags` is an optional array of freeform labels for filtering (no hierarchy).",
+      "Save a new gist to a project — a quick, non-committal chunk of context (an agent memory, a working prompt, a config incantation). It is NOT ingested into the wiki and NOT loaded into agent context by default; it's a stored, linkable chunk a teammate can pull in on demand. Automatically posted to the project's Feed as a linkable reference so it's discoverable — sharing isn't a separate step. Returns a url to view the gist; share that with the user. `project_slug`, `title`, and `body` (markdown) are required; `filename` and `tags` are optional.",
     inputSchema: schema(
-      { project_slug: STR, title: STR, body: STR, tags: { type: "array", items: STR } },
+      {
+        project_slug: STR,
+        title: STR,
+        filename: STR,
+        body: STR,
+        tags: { type: "array", items: STR },
+      },
       ["project_slug", "title", "body"],
     ),
     handler: async (request, fwd, args) => {
       const slug = encodeURIComponent(String(args.project_slug));
       const r = await fwd("POST", `/api/tome/projects/${slug}/gists`, {
         title: String(args.title),
+        ...(args.filename !== undefined ? { filename: String(args.filename) } : {}),
         body: String(args.body),
         tags: parseTagsArg(args.tags),
       });
@@ -1371,25 +1436,32 @@ const TOOLS: ToolDef[] = [
   {
     name: "tome_update_gist",
     description:
-      "Edit an existing gist without creating a new Feed entry. `project_slug` and `gist_id` are required. Provide at least one of `title`, `body` (markdown), or `tags`; omitted fields are preserved, while an empty `tags` array clears all tags. Returns the updated gist and its app URL.",
+      "Edit an existing gist without creating a new Feed entry. `project_slug` and `gist_id` are required. Provide at least one of `title`, `filename`, `body` (markdown), or `tags`; omitted fields are preserved, while an empty `tags` array clears all tags. Returns the updated gist and its app URL.",
     inputSchema: schema(
       {
         project_slug: STR,
         gist_id: STR,
         title: STR,
+        filename: STR,
         body: STR,
         tags: { type: "array", items: STR },
       },
       ["project_slug", "gist_id"],
     ),
     handler: async (request, fwd, args) => {
-      if (args.title === undefined && args.body === undefined && args.tags === undefined) {
-        return toolText("Provide at least one of `title`, `body`, or `tags`.", true);
+      if (
+        args.title === undefined &&
+        args.filename === undefined &&
+        args.body === undefined &&
+        args.tags === undefined
+      ) {
+        return toolText("Provide at least one of `title`, `filename`, `body`, or `tags`.", true);
       }
       const slug = encodeURIComponent(String(args.project_slug));
       const id = encodeURIComponent(String(args.gist_id));
       const update: Record<string, unknown> = {};
       if (args.title !== undefined) update.title = String(args.title);
+      if (args.filename !== undefined) update.filename = String(args.filename);
       if (args.body !== undefined) update.body = String(args.body);
       if (args.tags !== undefined) update.tags = parseTagsArg(args.tags);
       const data = ensureOk(
@@ -1404,6 +1476,7 @@ const TOOLS: ToolDef[] = [
 ];
 
 const TOOLS_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
+const UNLINKED_SECONDARY_OIDC_TOOL = "tome_server_info";
 
 /** Shared tool registry for the REST connector facade. The facade exposes the
  * same operations as ordinary OpenAPI-described HTTP endpoints, while this
@@ -1418,7 +1491,12 @@ export function getTomeMcpTool(name: string): ToolDef | undefined {
 
 // --- JSON-RPC dispatch ------------------------------------------------------
 
-async function dispatch(request: NextRequest, rpc: RpcRequest, fwd: Forward) {
+async function dispatch(
+  request: NextRequest,
+  rpc: RpcRequest,
+  fwd: Forward,
+  unlinkedSecondaryOidc: boolean,
+) {
   switch (rpc.method) {
     case "initialize": {
       const requested = (rpc.params?.protocolVersion as string) || PROTOCOL_VERSION;
@@ -1432,7 +1510,11 @@ async function dispatch(request: NextRequest, rpc: RpcRequest, fwd: Forward) {
       return rpcResult(rpc.id, {});
     case "tools/list":
       return rpcResult(rpc.id, {
-        tools: TOOLS.map((t) => ({
+        tools: TOOLS.filter(
+          (tool) =>
+            !unlinkedSecondaryOidc ||
+            tool.name === UNLINKED_SECONDARY_OIDC_TOOL,
+        ).map((t) => ({
           name: t.name,
           description: t.description,
           inputSchema: t.inputSchema,
@@ -1443,6 +1525,18 @@ async function dispatch(request: NextRequest, rpc: RpcRequest, fwd: Forward) {
       const args = (rpc.params?.arguments as Record<string, any>) ?? {};
       const tool = TOOLS_BY_NAME.get(name);
       if (!tool) return rpcError(rpc.id, -32602, `Unknown tool: ${name}`);
+      if (
+        unlinkedSecondaryOidc &&
+        tool.name !== UNLINKED_SECONDARY_OIDC_TOOL
+      ) {
+        return rpcResult(
+          rpc.id,
+          toolText(
+            "Sign in to the CAIPE portal once with the same corporate email, then reconnect to use project tools.",
+            true,
+          ),
+        );
+      }
       try {
         const result = await tool.handler(request, fwd, args);
         return rpcResult(rpc.id, boundToolResult(name, result));
@@ -1466,11 +1560,19 @@ export async function POST(request: NextRequest) {
 
   // Authenticate the transport. This supports a session cookie, a Keycloak
   // bearer JWT, or a user-minted Tome API key.
+  let unlinkedSecondaryOidc = false;
   try {
-    const { session } = await getTomeAuthFromBearerOrSession(request);
+    const { session } = await getMcpAuthFromBearerOrSession(request, {
+      allowUnlinkedSecondaryIdentity: true,
+    });
     requireInteractiveTomePrincipal(session);
-    if ("tomeOidcProof" in session && session.tomeOidcProof) {
-      request.headers.set(TOME_MCP_OIDC_PROOF_HEADER, session.tomeOidcProof);
+    unlinkedSecondaryOidc =
+      session.principalType === "secondary_oidc_unlinked";
+    if ("secondaryOidcProof" in session && session.secondaryOidcProof) {
+      request.headers.set(
+        SECONDARY_OIDC_PROOF_HEADER,
+        session.secondaryOidcProof,
+      );
     }
   } catch {
     // Point clients at our RFC 9728 metadata so they can discover the
@@ -1522,7 +1624,7 @@ export async function POST(request: NextRequest) {
     }
     // Notifications (no id, e.g. notifications/initialized) get no response.
     const isNotification = rpc.id === undefined || rpc.id === null;
-    const res = await dispatch(request, rpc, fwd);
+    const res = await dispatch(request, rpc, fwd, unlinkedSecondaryOidc);
     if (!isNotification) responses.push(res);
   }
 

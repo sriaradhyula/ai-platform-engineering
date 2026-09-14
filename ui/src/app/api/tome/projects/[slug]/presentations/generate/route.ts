@@ -2,12 +2,15 @@ import { NextRequest } from "next/server";
 
 import { ApiError, withErrorHandler } from "@/lib/api-middleware";
 import { buildSnapshot } from "@/lib/tome/agent-proxy";
+import { getTomeGistsCollection } from "@/lib/tome/mongo-collections";
 import { getPageStore } from "@/lib/tome/page-store";
 import {
   normalizePresentationDeck,
+  presentationSourceFromGist,
   presentationSourceFromPage,
   PRESENTATION_SOURCE_SCOPES,
   type PresentationDeck,
+  type PresentationSource,
   type PresentationSourceScope,
 } from "@/lib/tome/presentation";
 import { parseFrontmatter, SPEC_BY_PATH } from "@/lib/tome/schema";
@@ -25,18 +28,19 @@ interface GenerateBody {
   existing_deck?: unknown;
   revision_instruction?: unknown;
   slide_id?: unknown;
+  gist_id?: unknown;
 }
 
 function parseScope(value: unknown): PresentationSourceScope {
   if (typeof value === "string" && (PRESENTATION_SOURCE_SCOPES as readonly string[]).includes(value)) {
     return value as PresentationSourceScope;
   }
-  throw new ApiError("source_scope must be current, selected, or wiki", 400, "BAD_REQUEST");
+  throw new ApiError("source_scope must be current, selected, wiki, or gist", 400, "BAD_REQUEST");
 }
 
 function requestedPaths(value: unknown): string[] {
   if (!Array.isArray(value) || value.some((path) => typeof path !== "string")) {
-    throw new ApiError("paths must be an array of wiki page paths", 400, "BAD_REQUEST");
+    throw new ApiError("paths must be an array of TOME source references", 400, "BAD_REQUEST");
   }
   return [...new Set(value.map((path) => path.trim()).filter(Boolean))];
 }
@@ -124,7 +128,7 @@ function normalizedGenerationStream(
   }));
 }
 
-/** Generate or revise a deck using only server-resolved, viewer-accessible wiki pages. */
+/** Generate or revise a deck using only server-resolved, viewer-accessible TOME sources. */
 export const POST = withErrorHandler(async (request: NextRequest, ctx: Ctx) => {
   const { slug } = await ctx.params;
   const tctx = await loadTomeProject(request, slug);
@@ -134,35 +138,52 @@ export const POST = withErrorHandler(async (request: NextRequest, ctx: Ctx) => {
   const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
   if (!prompt) throw new ApiError("A confirmed presentation prompt is required", 400, "BAD_REQUEST");
   if (prompt.length > 100_000) throw new ApiError("Presentation prompt is too large", 413, "PROMPT_TOO_LARGE");
-  if ((scope === "current" && paths.length !== 1) || (scope === "selected" && paths.length === 0)) {
-    throw new ApiError("Choose the wiki pages to include", 400, "NO_SOURCES");
+  if ((scope === "current" && paths.length !== 1)
+    || (scope === "selected" && paths.length === 0)
+    || (scope === "gist" && paths.length !== 1)) {
+    throw new ApiError("Choose the TOME sources to include", 400, "NO_SOURCES");
   }
 
-  const store = await getPageStore();
-  const pages = await store.listPages(tctx.projectId);
-  const isHiddenPath = (path: string): boolean => {
-    const markdown = pages[path];
-    if (markdown === undefined) return false;
-    const [frontmatter] = parseFrontmatter(markdown);
-    return (frontmatter.kind ?? SPEC_BY_PATH.get(path)?.kind) === "hidden";
-  };
-  // Hidden agent-only pages are excluded regardless of scope, so an explicit
-  // current/selected path can't be used to bypass the "wiki" scope's filter.
-  const selectedPaths = scope === "wiki"
-    ? Object.keys(pages).filter((path) => !isHiddenPath(path))
-    : paths.filter((path) => !isHiddenPath(path));
-  if (selectedPaths.length === 0) throw new ApiError("No wiki pages are available to present", 400, "NO_SOURCES");
+  let selectedPaths: string[];
+  let sources: PresentationSource[];
+  if (scope === "gist") {
+    const gistId = typeof body.gist_id === "string" ? body.gist_id.trim() : "";
+    if (!gistId) throw new ApiError("gist_id is required for a gist presentation", 400, "BAD_REQUEST");
+    const gists = await getTomeGistsCollection();
+    const gist = await gists.findOne({ _id: gistId, project_id: tctx.projectId });
+    if (!gist) throw new ApiError("Gist not found", 404, "GIST_NOT_FOUND");
+    const source = presentationSourceFromGist(gistId, gist.title, gist.body);
+    if (paths[0] !== source.path) {
+      throw new ApiError("The gist source reference does not match gist_id", 400, "BAD_REQUEST");
+    }
+    selectedPaths = [source.path];
+    sources = [source];
+  } else {
+    const store = await getPageStore();
+    const pages = await store.listPages(tctx.projectId);
+    const isHiddenPath = (path: string): boolean => {
+      const markdown = pages[path];
+      if (markdown === undefined) return false;
+      const [frontmatter] = parseFrontmatter(markdown);
+      return (frontmatter.kind ?? SPEC_BY_PATH.get(path)?.kind) === "hidden";
+    };
+    // Hidden agent-only pages are excluded regardless of scope, so an explicit
+    // current/selected path can't be used to bypass the "wiki" scope's filter.
+    selectedPaths = scope === "wiki"
+      ? Object.keys(pages).filter((path) => !isHiddenPath(path))
+      : paths.filter((path) => !isHiddenPath(path));
+    const missing = selectedPaths.find((path) => !Object.prototype.hasOwnProperty.call(pages, path));
+    if (missing) throw new ApiError(`Wiki page not found: ${missing}`, 404, "PAGE_NOT_FOUND");
+    sources = selectedPaths.map((path) => presentationSourceFromPage(path, pages[path]));
+  }
+  if (selectedPaths.length === 0) throw new ApiError("No TOME sources are available to present", 400, "NO_SOURCES");
   if (selectedPaths.length > 100) {
-    throw new ApiError("Select at most 100 wiki pages for one presentation", 413, "TOO_MANY_SOURCES");
+    throw new ApiError("Select at most 100 TOME sources for one presentation", 413, "TOO_MANY_SOURCES");
   }
-  const missing = selectedPaths.find((path) => !Object.prototype.hasOwnProperty.call(pages, path));
-  if (missing) throw new ApiError(`Wiki page not found: ${missing}`, 404, "PAGE_NOT_FOUND");
-
-  const sources = selectedPaths.map((path) => presentationSourceFromPage(path, pages[path]));
   const sourceChars = sources.reduce((total, source) => total + source.content.length, 0);
   if (sourceChars > 500_000) {
     throw new ApiError(
-      "The selected wiki content is too large for one generation run. Choose Selected pages and narrow the source set.",
+      "The selected TOME content is too large for one generation run. Narrow the source set.",
       413,
       "SOURCES_TOO_LARGE",
     );

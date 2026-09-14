@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { NextRequest } from "next/server";
 
-import { TOME_MCP_OIDC_PROOF_HEADER } from "@/lib/tome/oidc-jwt";
+import { SECONDARY_OIDC_PROOF_HEADER } from "@/lib/auth/secondary-oidc";
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const MAX_SESSIONS = 100;
@@ -150,11 +150,11 @@ export function forwardMcpHeaders(request: NextRequest): Record<string, string> 
   const authorization = request.headers.get("Authorization");
   const cookie = request.headers.get("cookie");
   const tomeApiKey = request.headers.get("X-Caipe-Token");
-  const oidcProof = request.headers.get(TOME_MCP_OIDC_PROOF_HEADER);
+  const oidcProof = request.headers.get(SECONDARY_OIDC_PROOF_HEADER);
   if (authorization) headers.Authorization = authorization;
   if (cookie) headers.cookie = cookie;
   if (tomeApiKey) headers["X-Caipe-Token"] = tomeApiKey;
-  if (oidcProof) headers[TOME_MCP_OIDC_PROOF_HEADER] = oidcProof;
+  if (oidcProof) headers[SECONDARY_OIDC_PROOF_HEADER] = oidcProof;
   return headers;
 }
 

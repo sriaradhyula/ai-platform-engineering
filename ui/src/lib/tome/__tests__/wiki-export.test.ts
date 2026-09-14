@@ -143,6 +143,32 @@ describe("Tome wiki export", () => {
     expect(markdown).toContain(`url: https://app.vidcast.io/share/embed/${id}`);
   });
 
+  it("renders portable table-cell line breaks as line breaks in HTML exports", () => {
+    const tablePages = {
+      "table.md": [
+        "---",
+        "title: Table",
+        "kind: stable",
+        "---",
+        "| Work |",
+        "| --- |",
+        "| • First<br>• Second |",
+      ].join("\n"),
+    };
+    const document = buildWikiExportDocument({
+      projectName: "Example Project",
+      pages: tablePages,
+      tree: buildTree(tablePages),
+    });
+
+    const html = renderWikiHtml(document);
+    const markdown = renderWikiMarkdown(document);
+
+    expect(html).toContain("• First<br>• Second");
+    expect(html).not.toContain("&lt;br&gt;");
+    expect(markdown).toContain("• First<br>• Second");
+  });
+
   it("generates an actual PDF buffer", async () => {
     const document = buildWikiExportDocument({
       projectName: "Example Project",

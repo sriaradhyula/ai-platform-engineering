@@ -122,7 +122,7 @@ helm show values oci://ghcr.io/cnoe-io/charts/ai-platform-engineering --version 
 | caipe-ui.image.pullPolicy | string | `"IfNotPresent"` |  |
 | caipe-ui.image.repository | string | `"ghcr.io/caipe-io/caipe-ui"` |  |
 | caipe-ui.image.tag | string | `""` |  |
-| caipe-ui.ingress.annotations | object | `{}` |  |
+| caipe-ui.ingress.annotations | object | `{"nginx.ingress.kubernetes.io/proxy-body-size":"12m"}` |  |
 | caipe-ui.ingress.className | string | `"nginx"` |  |
 | caipe-ui.ingress.enabled | bool | `false` |  |
 | caipe-ui.ingress.hosts[0].host | string | `"caipe-ui.local"` |  |

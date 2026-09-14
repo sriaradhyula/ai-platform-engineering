@@ -2,15 +2,15 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FileText, Link2, Trash2 } from "lucide-react";
+import { FileText, Link2, Plus, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CopyButton } from "@/components/ui/copy-button";
-import { GistEditorDialog, type GistRecord } from "@/components/tome/GistEditorDialog";
 import { PanelHeader } from "@/components/tome/PanelHeader";
 import { TomeLoading } from "@/components/tome/TomeLoading";
 import { cn } from "@/lib/utils";
+import type { GistRecord } from "@/types/tome";
 
 /**
  * Gists: quick, non-committal chunks of context (a prompt, an agent memory, a
@@ -30,10 +30,12 @@ export function GistsPanel({
   slug,
   canEdit,
   onOpenGist,
+  onNewGist,
 }: {
   slug: string;
   canEdit: boolean;
   onOpenGist: (id: string) => void;
+  onNewGist: () => void;
 }) {
   const [gists, setGists] = useState<GistRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -89,7 +91,12 @@ export function GistsPanel({
         <PanelHeader
           title="Gists"
           description="Quick, non-committal context saved outside the wiki."
-          action={<GistEditorDialog slug={slug} onSaved={(gist) => onOpenGist(gist.id)} />}
+          action={(
+            <Button size="sm" className="gap-1.5" onClick={onNewGist}>
+              <Plus className="h-3.5 w-3.5" />
+              New gist
+            </Button>
+          )}
         />
       </div>
 

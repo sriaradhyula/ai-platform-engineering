@@ -71,6 +71,33 @@
     0px 2px 6px 2px rgba(0, 0, 0, 0.15), 0px 1px 2px 0px rgba(0, 0, 0, 0.3);
 }
 
+/* Keep the sticky formatting bar and its Heading menu above Crepe's
+   selection toolbar. Both vendor surfaces default to z-index: 10, allowing
+   the later selection toolbar to cover and intercept heading options. */
+.milkdown .milkdown-top-bar {
+  z-index: 30;
+}
+
+/* Crepe fills every toolbar SVG by default. Tome's media-library icon uses
+   strokes for the frame and stack, with only the play symbol filled. */
+.milkdown .milkdown-top-bar .top-bar-item svg[data-tome-media-icon] {
+  fill: none;
+  stroke: currentColor;
+}
+
+/* Crepe fills toolbar SVGs by default. Undo/redo are open stroked paths;
+   filling them turns the curves into misleading solid silhouettes. */
+.milkdown .milkdown-top-bar .top-bar-item svg[data-tome-undo-icon],
+.milkdown .milkdown-top-bar .top-bar-item svg[data-tome-redo-icon] {
+  fill: none;
+  stroke: currentColor;
+}
+
+.milkdown .milkdown-top-bar .top-bar-item svg[data-tome-media-icon] [data-tome-media-play] {
+  fill: currentColor;
+  stroke: none;
+}
+
 /* Crepe's vendor type scale (reset.css) runs large for a docs surface — e.g.
    h1 at 42px/50px, body text at 16px/24px. Tone the whole scale and the
    surrounding spacing down a notch; loads after the vendor stylesheet so
@@ -117,6 +144,75 @@
   padding: 2px 0;
 }
 
+/* Consecutive `[!column]` blockquotes are portable Markdown with an editor
+   presentation layered on top. Keep the actual nodes in document order so
+   caret movement, undo, and serialization continue to be native Milkdown. */
+.milkdown .ProseMirror .tome-column-editable {
+  display: inline-block;
+  box-sizing: border-box;
+  min-width: 0;
+  margin: 1rem 0;
+  padding: 1rem;
+  vertical-align: top;
+  border: 1px solid var(--crepe-color-secondary);
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--crepe-color-surface) 65%, transparent);
+}
+
+.milkdown .ProseMirror .tome-column-editable[data-column-count="2"] {
+  width: calc((100% - 1rem) / 2);
+}
+
+.milkdown .ProseMirror .tome-column-editable[data-column-count="3"] {
+  width: calc((100% - 2rem) / 3);
+}
+
+.milkdown .ProseMirror .tome-column-editable + .tome-column-editable {
+  margin-left: 1rem;
+}
+
+.milkdown .ProseMirror .tome-column-marker {
+  display: none;
+}
+
+.milkdown .ProseMirror .tome-column-separator {
+  display: none;
+}
+
+.milkdown .ProseMirror .tome-column-editable::before {
+  content: "Column " attr(data-column-index);
+  display: block;
+  position: static;
+  inset: auto;
+  width: auto;
+  margin-bottom: 0.5rem;
+  background: transparent;
+  border-radius: 0;
+  color: var(--crepe-color-on-surface-variant);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.milkdown .ProseMirror .tome-column-editable > :not(.tome-column-marker):first-of-type {
+  margin-top: 0;
+}
+
+@media (max-width: 767px) {
+  .milkdown .ProseMirror .tome-column-editable {
+    display: block;
+    width: 100%;
+    margin: 0.75rem 0;
+  }
+
+  .milkdown .ProseMirror .tome-column-editable + .tome-column-editable {
+    margin-left: 0;
+  }
+}
+
 .milkdown .ProseMirror .milkdown-table-block th,
 .milkdown .ProseMirror .milkdown-table-block td {
   padding: 3px 10px;
@@ -128,10 +224,47 @@
   padding: 0;
 }
 
+/* Match every list marker to Tome's compact 25px paragraph line box. Crepe's
+   default marker is 32px tall with a 10px gutter, making bullets and numbers
+   look detached from otherwise compact body text. Keep one fixed marker
+   column so unordered, ordered, task, nested, and wrapped items align. */
+.milkdown .ProseMirror .milkdown-list-item-block > .list-item {
+  gap: 6px;
+}
+
+.milkdown .ProseMirror .milkdown-list-item-block > .list-item > .label-wrapper {
+  color: var(--crepe-color-on-surface-variant);
+  height: 25px;
+  width: 24px;
+  flex: 0 0 24px;
+}
+
+.milkdown .ProseMirror .milkdown-list-item-block > .list-item > .label-wrapper svg {
+  fill: var(--crepe-color-on-surface-variant);
+}
+
+.milkdown .ProseMirror .milkdown-list-item-block > .list-item > .label-wrapper > .label {
+  height: 25px;
+  width: 24px;
+  padding: 2px 0;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  line-height: 21px;
+}
+
+.milkdown .ProseMirror .milkdown-list-item-block > .list-item > .label-wrapper > .bullet,
+.milkdown .ProseMirror .milkdown-list-item-block > .list-item > .label-wrapper > .checked,
+.milkdown .ProseMirror .milkdown-list-item-block > .list-item > .label-wrapper > .unchecked {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
 /* Milkdown renders raw HTML-comment nodes (`<!-- ... -->`) as visible text by
    default. Agent-only sourcing guidance seeded into a page body relies on
    these being invisible outside the admin template editor. */
-.milkdown-hide-comments [data-type="html"] {
+.milkdown-hide-comments [data-type="html"][data-value^="<!--"] {
   display: none;
 }
 
@@ -276,6 +409,19 @@
   position: relative;
   display: grid;
   gap: 0.625rem;
+  width: var(--tome-media-width, 100%);
+  max-width: 100%;
+  margin-inline: auto;
+}
+
+.tome-embed-preview[data-media-align="left"] {
+  margin-left: 0;
+  margin-right: auto;
+}
+
+.tome-embed-preview[data-media-align="right"] {
+  margin-left: auto;
+  margin-right: 0;
 }
 
 .tome-embed-frame {
@@ -303,6 +449,44 @@
   border: 0;
 }
 
+.tome-media-resize {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 2rem;
+  height: 2rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.5rem;
+  background: hsl(var(--background) / 0.92);
+  color: hsl(var(--foreground));
+  padding: 0 0.45rem;
+  box-shadow: 0 2px 8px hsl(var(--background) / 0.45);
+  cursor: ew-resize;
+  user-select: none;
+}
+
+.tome-media-resize:hover,
+.tome-media-resize:focus-visible,
+.tome-media-resizing .tome-media-resize {
+  border-color: hsl(var(--primary));
+  color: hsl(var(--primary));
+  outline: none;
+}
+
+.tome-media-size-label {
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.tome-media-resize-icon {
+  font-size: 1rem;
+  line-height: 1;
+}
+
 .tome-embed-link {
   width: fit-content;
   color: hsl(var(--primary));
@@ -326,8 +510,59 @@
 .tome-embed-toolbar {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 0.5rem;
 }
 
+.tome-media-alignment {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.5rem;
+  background: hsl(var(--background));
+}
+
+.tome-media-align {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 1.75rem;
+  border: 0;
+  border-right: 1px solid hsl(var(--border));
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.tome-media-align:last-child {
+  border-right: 0;
+}
+
+.tome-media-align svg {
+  width: 1rem;
+  height: 1rem;
+  fill: none;
+}
+
+.tome-media-align:hover {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+}
+
+.tome-media-align[aria-pressed="true"] {
+  background: hsl(var(--primary) / 0.14);
+  color: hsl(var(--primary));
+}
+
+.tome-media-align:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: -2px;
+}
+
+.tome-vidcast-playlist-toggle,
 .tome-embed-remove,
 .tome-image-remove {
   display: inline-flex;
@@ -345,6 +580,39 @@
   cursor: pointer;
 }
 
+.tome-vidcast-playlist-toggle:hover {
+  background: hsl(var(--muted));
+}
+
+.tome-vidcast-playlist-toggle-track {
+  position: relative;
+  width: 1.75rem;
+  height: 1rem;
+  flex: none;
+  border-radius: 9999px;
+  background: hsl(var(--muted-foreground) / 0.35);
+  transition: background-color 150ms ease;
+}
+
+.tome-vidcast-playlist-toggle-track > span {
+  position: absolute;
+  top: 0.125rem;
+  left: 0.125rem;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 9999px;
+  background: hsl(var(--background));
+  transition: transform 150ms ease;
+}
+
+.tome-vidcast-playlist-toggle[aria-checked="true"] .tome-vidcast-playlist-toggle-track {
+  background: hsl(var(--primary));
+}
+
+.tome-vidcast-playlist-toggle[aria-checked="true"] .tome-vidcast-playlist-toggle-track > span {
+  transform: translateX(0.75rem);
+}
+
 .tome-embed-remove:hover,
 .tome-image-remove:hover {
   background: hsl(var(--destructive));
@@ -353,13 +621,68 @@
 }
 
 .tome-embed-remove:focus-visible,
-.tome-image-remove:focus-visible {
+.tome-image-remove:focus-visible,
+.tome-vidcast-playlist-toggle:focus-visible {
   outline: 2px solid hsl(var(--ring));
   outline-offset: 2px;
 }
 
 .milkdown-image-block {
   position: relative;
+}
+
+.milkdown .milkdown-image-block > .image-wrapper {
+  max-width: 100%;
+}
+
+.milkdown .milkdown-image-block[data-media-width] > .image-wrapper {
+  width: var(--tome-media-width);
+}
+
+.milkdown .milkdown-image-block[data-media-align="left"] > .image-wrapper {
+  margin-left: 0;
+  margin-right: auto;
+}
+
+.milkdown .milkdown-image-block[data-media-align="center"] > .image-wrapper {
+  margin-inline: auto;
+}
+
+.milkdown .milkdown-image-block[data-media-align="right"] > .image-wrapper {
+  margin-left: auto;
+  margin-right: 0;
+}
+
+.milkdown .milkdown-image-block > .caption-input {
+  width: var(--tome-media-width, 100%);
+  max-width: 100%;
+}
+
+.milkdown .milkdown-image-block[data-media-align="left"] > .caption-input {
+  margin-left: 0;
+  margin-right: auto;
+}
+
+.milkdown .milkdown-image-block[data-media-align="right"] > .caption-input {
+  margin-left: auto;
+  margin-right: 0;
+}
+
+.milkdown .milkdown-image-block > .image-wrapper img {
+  width: 100%;
+  height: auto !important;
+  min-height: 0;
+  object-fit: contain;
+}
+
+/* Replaced with the visible bottom-right proportional resize control. */
+.milkdown .milkdown-image-block > .image-wrapper > .image-resize-handle {
+  display: none;
+}
+
+.milkdown-image-block .tome-image-resize {
+  right: 0.5rem;
+  bottom: 0.5rem;
 }
 
 .milkdown-image-block .tome-embed-toolbar {
@@ -372,6 +695,9 @@
    as "editing" even though nothing can actually be typed. */
 .ProseMirror[contenteditable="false"] .tome-embed-remove,
 .ProseMirror[contenteditable="false"] .tome-image-remove,
+.ProseMirror[contenteditable="false"] .tome-vidcast-playlist-toggle,
+.ProseMirror[contenteditable="false"] .tome-media-alignment,
+.ProseMirror[contenteditable="false"] .tome-media-resize,
 .ProseMirror[contenteditable="false"] .milkdown-code-block .tools {
   display: none;
 }

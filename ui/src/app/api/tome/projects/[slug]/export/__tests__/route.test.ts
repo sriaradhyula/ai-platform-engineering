@@ -4,6 +4,7 @@ import { NextRequest } from "next/server";
 
 const mockLoadTomeProject = jest.fn();
 const mockListPages = jest.fn();
+const mockFindGist = jest.fn();
 
 jest.mock("@/lib/tome/tome-api", () => ({
   loadTomeProject: (...args: unknown[]) => mockLoadTomeProject(...args),
@@ -13,15 +14,30 @@ jest.mock("@/lib/tome/page-store", () => ({
     listPages: (...args: unknown[]) => mockListPages(...args),
   })),
 }));
+jest.mock("@/lib/tome/mongo-collections", () => ({
+  getTomeGistsCollection: jest.fn().mockImplementation(async () => ({
+    findOne: (...args: unknown[]) => mockFindGist(...args),
+  })),
+}));
+jest.mock("@/lib/tome/folder-store", () => ({
+  ensureFoldersForPages: jest.fn(),
+  listFolders: jest.fn().mockResolvedValue([]),
+}));
+jest.mock("@/lib/tome/navigation-store", () => ({
+  ensurePagePlacements: jest.fn(),
+  listPagePlacements: jest.fn().mockResolvedValue([]),
+}));
 
 import { GET } from "@/app/api/tome/projects/[slug]/export/route";
 
 const context = { params: Promise.resolve({ slug: "example-project" }) };
 
 beforeEach(() => {
+  jest.clearAllMocks();
   mockLoadTomeProject.mockResolvedValue({
     projectId: "project-1",
     project: { title: "Example Project" },
+    user: { email: "test-user@example.com" },
   });
   mockListPages.mockResolvedValue({
     "overview.md": `---
@@ -32,6 +48,7 @@ kind: stable
 
 Visible. <!-- hidden guidance -->`,
   });
+  mockFindGist.mockResolvedValue(null);
 });
 
 describe("GET Tome wiki export", () => {
@@ -95,6 +112,46 @@ describe("GET Tome wiki export", () => {
     const bytes = Buffer.from(await response.arrayBuffer());
     expect(bytes.subarray(0, 5).toString("ascii")).toBe("%PDF-");
     expect(Number(response.headers.get("Content-Length"))).toBe(bytes.byteLength);
+  });
+
+  it("downloads a project-authorized gist with its own filename", async () => {
+    mockFindGist.mockResolvedValue({
+      _id: "gist-1",
+      project_id: "project-1",
+      title: "Example notes",
+      filename: "example-notes.md",
+      body: "# Notes\n\nVisible. <!-- hidden guidance -->",
+    });
+
+    const response = await GET(
+      new NextRequest(
+        "http://localhost/api/tome/projects/example-project/export?format=markdown&gist=gist-1",
+      ),
+      context,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Disposition")).toBe(
+      'attachment; filename="example-notes.md"',
+    );
+    expect(await response.text()).toBe("# Notes\n\nVisible.\n");
+    expect(mockFindGist).toHaveBeenCalledWith({ _id: "gist-1", project_id: "project-1" });
+    expect(mockListPages).not.toHaveBeenCalled();
+  });
+
+  it("returns not found when a gist is outside the project", async () => {
+    const response = await GET(
+      new NextRequest(
+        "http://localhost/api/tome/projects/example-project/export?format=pdf&gist=other-gist",
+      ),
+      context,
+    );
+
+    expect(response.status).toBe(404);
+    expect(mockFindGist).toHaveBeenCalledWith({
+      _id: "other-gist",
+      project_id: "project-1",
+    });
   });
 
   it("returns not found for an unknown page", async () => {

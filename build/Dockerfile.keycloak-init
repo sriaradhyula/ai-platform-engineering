@@ -4,14 +4,13 @@
 #
 # Used by:
 #   - docker-compose.dev.yaml  → `keycloak-init` and `keycloak-init-token-exchange` services
-#   - charts/.../keycloak/templates/job-init-*.yaml → Helm post-install Jobs
+#   - charts/.../keycloak/templates/job-*.yaml → Helm reconciliation Jobs
 #
-# The two scripts (canonical at charts/.../keycloak/scripts/init-*.sh, with
-# symlinks at deploy/keycloak/init-*.sh) need:
+# The scripts (canonical at charts/.../keycloak/scripts/, with compatibility
+# symlinks for init-*.sh at deploy/keycloak/) need:
 #   - sh + sed + grep + awk  → portable shell munging
 #   - curl                   → talk to Keycloak Admin API
-#   - python3                → JSON munging for the user-profile / slack_user_id
-#                              section in init-idp.sh (~line 295)
+#   - python3                → JSON munging for Keycloak profile/client updates
 #
 # We base on Chainguard's wolfi-base for:
 #   - small footprint (~80 MB final, vs Debian slim ~210 MB)

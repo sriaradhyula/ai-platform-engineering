@@ -1827,33 +1827,44 @@ function readAttributeValue(attrs: unknown, attributeName: string): string | und
   return typeof first === "string" && first.trim() ? first.trim() : undefined;
 }
 
-/**
- * Returns the Keycloak user id that currently owns `attributeValue` for `attributeName`, if any.
- */
-export async function findRealmUserIdByAttribute(
+/** Return every Keycloak user id with the exact custom-attribute value. */
+export async function findRealmUserIdsByAttribute(
   attributeName: string,
   attributeValue: string
-): Promise<string | null> {
+): Promise<string[]> {
   const trimmed = attributeValue.trim();
-  if (!trimmed) return null;
+  if (!trimmed) return [];
 
   const q = `${attributeName}:${trimmed}`;
   const response = await adminFetch(
-    `/users?q=${encodeURIComponent(q)}&max=5`,
+    `/users?q=${encodeURIComponent(q)}&max=100`,
     { method: "GET" }
   );
-  await assertOk(response, `findRealmUserIdByAttribute(${attributeName})`);
+  await assertOk(response, `findRealmUserIdsByAttribute(${attributeName})`);
   const users = await parseJsonArray<Record<string, unknown>>(response);
+  const ids: string[] = [];
 
   for (const user of users) {
     const value = readAttributeValue(user.attributes, attributeName);
     if (value !== trimmed) continue;
     const id = user.id;
     if (id !== undefined && id !== null) {
-      return String(id);
+      ids.push(String(id));
     }
   }
-  return null;
+  return ids;
+}
+
+/**
+ * Returns the first Keycloak user id that currently owns an exact custom
+ * attribute value, preserving the established Slack/Webex helper contract.
+ */
+export async function findRealmUserIdByAttribute(
+  attributeName: string,
+  attributeValue: string
+): Promise<string | null> {
+  const ids = await findRealmUserIdsByAttribute(attributeName, attributeValue);
+  return ids[0] ?? null;
 }
 
 // ───────────────────────────────────────────────────────────────────────────

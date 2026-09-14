@@ -1166,9 +1166,10 @@ fi
 # CAIPE business authorization is OpenFGA-backed. Do not add application roles
 # such as chat_user/admin/team_member to the realm default role.
 
-# --- configure user profile: allow slack_user_id / webex_user_id and avoid profile prompts ---
+# --- configure user profile: allow external identity links and avoid profile prompts ---
 # Keycloak 26+ silently drops custom attributes not in the user profile schema.
-# We add slack_user_id and webex_user_id and enable unmanagedAttributePolicy=ADMIN_EDIT
+# We add the Slack, Webex, and TOME secondary OIDC link attributes and enable
+# unmanagedAttributePolicy=ADMIN_EDIT
 # so the Admin API (identity linking, JIT, user management) can set attributes.
 # We also explicitly make firstName/lastName optional. Upstream enterprise IdPs
 # are the profile source of truth; CAIPE must not interrupt SSO to collect names.
@@ -1183,11 +1184,17 @@ try:
     p = json.load(sys.stdin)
 except Exception:
     sys.exit(1)
-# Add slack_user_id / webex_user_id if not already present
+# Add external identity attributes if not already present
 names = [a['name'] for a in p.get('attributes', [])]
 for attr_name, display in (
     ('slack_user_id', 'Slack User ID'),
     ('webex_user_id', 'Webex User ID'),
+    ('caipe_secondary_oidc_identity_key', 'CAIPE Secondary OIDC Identity Key'),
+    ('caipe_secondary_oidc_provider_id', 'CAIPE Secondary OIDC Provider ID'),
+    ('caipe_secondary_oidc_issuer', 'CAIPE Secondary OIDC Issuer'),
+    ('caipe_secondary_oidc_sub', 'CAIPE Secondary OIDC Subject'),
+    ('caipe_secondary_oidc_email', 'CAIPE Secondary OIDC Email'),
+    ('caipe_secondary_oidc_linked_at', 'CAIPE Secondary OIDC Linked At'),
 ):
     if attr_name not in names:
         p.setdefault('attributes', []).append({
@@ -1211,7 +1218,7 @@ json.dump(p, sys.stdout)
     curl -sf -X PUT -H "${AUTH}" -H "Content-Type: application/json" \
       "${KC_URL}/admin/realms/${REALM}/users/profile" \
       -d "${UPDATED_PROFILE}" && \
-      echo "[init-idp]   User profile updated (slack_user_id, webex_user_id + optional firstName/lastName + unmanagedAttributePolicy=ADMIN_EDIT)." || \
+      echo "[init-idp]   User profile updated (external identity links + optional firstName/lastName + unmanagedAttributePolicy=ADMIN_EDIT)." || \
       echo "[init-idp]   WARNING: failed to update user profile."
   else
     echo "[init-idp]   WARNING: failed to parse user profile JSON (python3 required)."

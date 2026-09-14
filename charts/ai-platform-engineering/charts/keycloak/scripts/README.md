@@ -1,11 +1,11 @@
 # Keycloak init scripts — single source of truth
 
-This directory is the **canonical** location for the two Keycloak post-install
+This directory is the **canonical** location for the Keycloak reconciliation
 scripts. They are consumed by:
 
 | Consumer | How it loads them |
 |----------|-------------------|
-| Helm chart (`charts/.../keycloak/templates/configmap-init-scripts.yaml`) | `.Files.Get "scripts/init-*.sh"` rendered into a ConfigMap; mounted into `keycloak-init*` Jobs as `/scripts/`. |
+| Helm chart (`charts/.../keycloak/templates/configmap-init-scripts.yaml`) | Scripts are rendered into a ConfigMap and mounted into the Keycloak reconciliation Jobs as `/scripts/`. `reconcile-user-profile.sh` runs unconditionally on install and upgrade. |
 | Docker Compose dev stack (`docker-compose.dev.yaml`) | Bind-mounts via `./deploy/keycloak/init-*.sh:/scripts/init-*.sh:ro` — `deploy/keycloak/init-*.sh` are **symlinks** that resolve back to this directory. |
 
 ## Editing rules
@@ -13,7 +13,7 @@ scripts. They are consumed by:
 - **Always edit the files here.** Never replace `deploy/keycloak/init-*.sh`
   with regular files — that re-introduces drift (we already had a 776-line vs
   398-line divergence and a busybox-sed regex bug ride along for weeks).
-- Both scripts must remain **busybox `sh` / `sed`** portable. The Helm Job
+- All scripts must remain **busybox `sh` / `sed`** portable. The Helm Jobs
   and the docker-compose init containers both run inside our project image
   `caipe/keycloak-init` (built from `build/Dockerfile.keycloak-init`,
   based on Chainguard `wolfi-base`). Wolfi's `/bin/sh` and `sed` are still
@@ -25,8 +25,8 @@ scripts. They are consumed by:
     sed auto-closes at end of pattern but busybox aborts with
     `bad regex: Missing ')'`.
   - `python3` **is** available (~3.13) for richer JSON munging. Used by
-    `init-idp.sh` to update the realm user profile with the
-    `slack_user_id` attribute. Don't add other heavy runtime deps —
+  `init-idp.sh` and `reconcile-user-profile.sh` to update the realm user
+  profile. Don't add other heavy runtime deps —
     `apk add` more packages in `build/Dockerfile.keycloak-init` if you
     truly need them and document why.
 

@@ -658,42 +658,62 @@ Loads built-in skill templates from `SKILLS_DIR`, or chart `data/skills`, or `ui
 
 ---
 
-## TOME MCP authentication
+## Secondary OIDC authentication for MCP
 
 ### POST `/api/tome/mcp`
 
 **Auth:** Secondary OIDC JWT, Keycloak bearer token, or browser session
 
-The TOME MCP transport accepts the existing CAIPE/Keycloak authentication and,
-when configured, a JWT from a separate OIDC provider. Validation is local:
-TOME caches the configured JWKS, verifies the signature, requires `iss`, `aud`,
-and `exp`, checks `iss` against the configured issuer, and requires at least
-one configured audience.
+CAIPE MCP transports can opt into the shared secondary OIDC authenticator in
+addition to existing CAIPE/Keycloak authentication. TOME is the first consumer.
+Validation is local: CAIPE caches the configured JWKS, verifies the signature,
+requires `iss`, `aud`, and `exp`, checks `iss` against the configured issuer,
+and requires at least one configured audience.
 
 Configure the secondary OIDC trust anchor with:
 
 ```bash
-TOME_MCP_SECONDARY_OIDC_JWKS_URI=https://idp.example.com/oauth2/example/v1/keys
-TOME_MCP_SECONDARY_OIDC_ISSUER=https://idp.example.com/oauth2/example
-TOME_MCP_SECONDARY_OIDC_AUDIENCES=tome-api
+CAIPE_SECONDARY_OIDC_JWKS_URI=https://idp.example.com/oauth2/example/v1/keys
+CAIPE_SECONDARY_OIDC_ISSUER=https://idp.example.com/oauth2/example
+CAIPE_SECONDARY_OIDC_AUDIENCES=caipe-api
+CAIPE_SECONDARY_OIDC_PROVIDER_ID=corporate-assistant
 ```
 
-These settings are scoped to TOME MCP. A verified OIDC `sub` becomes the
-OpenFGA `user:<sub>` subject, so the corresponding TOME/project relationships
-must exist for that identity. The secondary OIDC access token is not accepted
-as a general-purpose credential on unrelated API routes.
+These settings configure one secondary trust domain for any MCP surface that
+uses the shared authenticator. On the first verified request for a new
+secondary `(issuer, sub)` pair, CAIPE requires the token's corporate email to
+match exactly one existing CAIPE user and stores an immutable link as admin-only
+attributes on that Keycloak user. The lookup attribute is a SHA-256 digest of
+`issuer + NUL + sub`; the provider ID, issuer, external subject, verified email,
+and link timestamp are retained as audit metadata. Later requests resolve only
+through the stored identity key, so an email change cannot silently reassign an
+identity. Tokens with an explicitly unverified email and conflicting links are
+rejected; identities without a matching CAIPE profile remain unlinked.
 
-The MCP route forwards verified secondary-provider requests to its existing
-project APIs using a server-generated proof bound to the token. Downstream
-routes verify the proof and revalidate the JWT, preserving the same identity
-and project-level authorization checks. Set `TOME_MCP_INTERNAL_AUTH_SECRET`
-for this proof, or allow it to fall back to the server's `NEXTAUTH_SECRET`.
+A cryptographically valid secondary identity whose email has no CAIPE profile
+may still initialize the MCP connection, ping it, list tools, and call
+`tome_server_info`. That is the only advertised tool in this unlinked state;
+it directs the user to sign in to CAIPE once. Project and data tools are denied
+before their handlers run. The next request after the CAIPE profile exists
+creates the immutable link automatically.
+
+The linked Keycloak subject becomes the OpenFGA `user:<sub>` subject. Secondary
+callers receive the normal MCP tool catalog, but each operation still passes
+through the same per-user OpenFGA read/write authorization as the web UI. The
+secondary OIDC access token is not accepted as a general-purpose credential on
+unrelated API routes.
+
+An MCP route may forward verified secondary-provider requests to existing APIs
+using a server-generated proof bound to the token. Downstream routes verify the
+proof and revalidate the JWT, preserving the same identity and authorization
+checks. The proof uses the existing `NEXTAUTH_SECRET` with a distinct HMAC
+context and is never accepted from a caller without revalidation.
 
 If secondary-provider validation fails, TOME still attempts the normal Keycloak
 bearer flow, allowing both token issuers to coexist during rollout. Invalid
 tokens ultimately receive `401 Unauthorized`.
 
-For temporary diagnostics, set `TOME_MCP_AUTH_DEBUG=true`. Rejected requests
+For temporary diagnostics, set `CAIPE_SECONDARY_OIDC_AUTH_DEBUG=true`. Rejected requests
 then log a request ID, a truncated SHA-256 token fingerprint, JWT `alg`, `kid`,
 `typ`, `iss`, `aud`, and time claims, plus the secondary and primary validation
 error codes. The bearer token, signature, subject, email, and request body are
@@ -706,11 +726,6 @@ sanitization return a compact tool error directing the client to
 `TOME_MCP_MAX_TOOL_RESULT_BYTES` when needed. JSON responses include an
 explicit content length, and notification-only requests return a bodyless
 `202 Accepted`, so clients do not have to use connection EOF as a delimiter.
-
-For existing deployments, the old `TOME_MCP_CIRCUIT_JWKS_URI`,
-`TOME_MCP_CIRCUIT_ISSUER`, and `TOME_MCP_CIRCUIT_AUDIENCES` names remain
-supported as deprecated aliases. The `TOME_MCP_SECONDARY_OIDC_*` names take
-precedence when both are set.
 
 ## Workflow Runs
 

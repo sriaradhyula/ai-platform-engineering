@@ -10,7 +10,7 @@
  * pages are agent-rewritten every ingest.
  */
 
-import type { PageKind, NodeKind } from "@/types/tome";
+import type { PageKind, NodeKind, TomeFolder, TomePagePlacement } from "@/types/tome";
 import { PAGE_KINDS } from "@/types/tome";
 
 export interface PageSpec {
@@ -613,6 +613,8 @@ export interface PageNode {
   kind: NodeKind;
   order: number;
   children: PageNode[];
+  folderId?: string;
+  parentFolderId?: string | null;
 }
 
 /**
@@ -623,7 +625,11 @@ export interface PageNode {
  * render them. Synthesizes `kind: folder` nodes for nested pages whose
  * `<dir>.md` parent doesn't exist.
  */
-export function buildTree(pages: Record<string, string>): PageNode[] {
+export function buildTree(
+  pages: Record<string, string>,
+  persistedFolders: readonly TomeFolder[] = [],
+  pagePlacements: readonly TomePagePlacement[] = [],
+): PageNode[] {
   const nodes = new Map<string, PageNode>();
   for (const [path, md] of Object.entries(pages)) {
     if (kindFromMd(md) === "report") continue;
@@ -677,6 +683,32 @@ export function buildTree(pages: Record<string, string>): PageNode[] {
   }
 
   const allNodes = new Map<string, PageNode>([...nodes, ...folders]);
+  const folderNodesById = new Map<string, PageNode>();
+  const folderNodesBySourcePath = new Map<string, PageNode>();
+  for (const folder of persistedFolders) {
+    const nodePath = folder.source_path ?? `@folder/${folder.id}`;
+    const node = allNodes.get(nodePath) ?? {
+      path: nodePath,
+      title: folder.name,
+      kind: "folder" as const,
+      order: folder.order,
+      children: [],
+    };
+    node.title = folder.name;
+    node.order = folder.order;
+    node.folderId = folder.id;
+    node.parentFolderId = folder.parent_id;
+    allNodes.set(nodePath, node);
+    folderNodesById.set(folder.id, node);
+    if (folder.source_path) folderNodesBySourcePath.set(folder.source_path, node);
+  }
+  const placementByPath = new Map(pagePlacements.map((placement) => [placement.path, placement]));
+  for (const [path, node] of nodes) {
+    const placement = placementByPath.get(path);
+    if (!placement) continue;
+    node.order = placement.order;
+    node.parentFolderId = placement.folder_id;
+  }
   const roots: PageNode[] = [];
 
   const sorted = [...allNodes.entries()].sort((a, b) => {
@@ -688,20 +720,24 @@ export function buildTree(pages: Record<string, string>): PageNode[] {
   });
 
   for (const [path, node] of sorted) {
-    const parent = resolveParent(path, allNodes);
+    let parent: PageNode | null = null;
+    if (node.kind === "folder" && node.folderId) {
+      parent = node.parentFolderId ? folderNodesById.get(node.parentFolderId) ?? null : null;
+    } else if (placementByPath.has(path)) {
+      parent = node.parentFolderId ? folderNodesById.get(node.parentFolderId) ?? null : null;
+    } else {
+      const directory = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : null;
+      parent = directory ? folderNodesBySourcePath.get(directory) ?? null : null;
+      parent ??= resolveParent(path, allNodes);
+    }
     if (parent) parent.children.push(node);
     else roots.push(node);
   }
 
-  // Folders (synthesized connector-group headers, e.g. `repos/`, `glossary/`)
-  // always sort after real pages regardless of `order` — they have no
-  // meaningful order of their own (every folder ties at 999) and would
-  // otherwise interleave with untemplated pages via alphabetical tie-break.
+  // Persisted order is shared across page and folder siblings, which allows a
+  // drag operation to place either kind before or after the other.
   const sortRec = (list: PageNode[]): void => {
     list.sort((a, b) => {
-      const fa = a.kind === "folder" ? 1 : 0;
-      const fb = b.kind === "folder" ? 1 : 0;
-      if (fa !== fb) return fa - fb;
       return a.order !== b.order ? a.order - b.order : a.path < b.path ? -1 : 1;
     });
     for (const n of list) sortRec(n.children);

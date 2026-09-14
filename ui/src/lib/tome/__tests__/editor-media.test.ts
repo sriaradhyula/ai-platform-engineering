@@ -7,6 +7,7 @@ import {
 } from "../editor-media";
 
 const VIDEO_ID = "de4fc0eb-7146-4044-86a3-60c3cbd976a3";
+const PLAYLIST_ID = "daa5d80c-9272-4587-989b-91d6c5f35b93";
 
 jest.mock("mermaid", () => ({
   __esModule: true,
@@ -143,6 +144,56 @@ describe("TOME editor media", () => {
     );
   });
 
+  it("renders and hydrates a Vidcast playlist player", () => {
+    const applyPreview = jest.fn();
+
+    renderTomeCodePreview(
+      "vidcast",
+      `url: https://app.vidcast.io/playlists/${PLAYLIST_ID}`,
+      applyPreview,
+    );
+    const root = document.createElement("div");
+    root.append(applyPreview.mock.calls[0]?.[0] as HTMLElement);
+    hydrateEmbedPreviews(root);
+
+    expect(root.querySelector("iframe")).toHaveAttribute(
+      "src",
+      `https://app.vidcast.io/playlists/embed/${PLAYLIST_ID}?expand=1`,
+    );
+    expect(root.querySelector("iframe")).toHaveAttribute("title", "Vidcast playlist");
+    expect(root.querySelector(".tome-embed-link")).toHaveAttribute(
+      "href",
+      `https://app.vidcast.io/playlists/${PLAYLIST_ID}`,
+    );
+    expect(root.querySelector(".tome-embed-link")).toHaveTextContent(
+      "Open playlist on Vidcast",
+    );
+    expect(root.querySelector(".tome-vidcast-playlist-toggle")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(root.querySelector(".tome-vidcast-playlist-toggle")).toHaveAccessibleName(
+      "Show playlist videos",
+    );
+  });
+
+  it("renders a collapsed Vidcast playlist toggle from its persisted URL", () => {
+    const applyPreview = jest.fn();
+
+    renderTomeCodePreview(
+      "vidcast",
+      `url: https://app.vidcast.io/playlists/${PLAYLIST_ID}?expand=0`,
+      applyPreview,
+    );
+    const root = document.createElement("div");
+    root.append(applyPreview.mock.calls[0]?.[0] as HTMLElement);
+
+    expect(root.querySelector(".tome-vidcast-playlist-toggle")).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+  });
+
   it("renders YouTube through the privacy-enhanced player", () => {
     const applyPreview = jest.fn();
 
@@ -170,6 +221,51 @@ describe("TOME editor media", () => {
       "href",
       "https://www.youtube.com/watch?v=M7lc1UVf-VE&t=30",
     );
+  });
+
+  it("renders a persisted video width with an accessible resize handle", () => {
+    const applyPreview = jest.fn();
+
+    renderTomeCodePreview(
+      "youtube",
+      [`url: https://youtu.be/M7lc1UVf-VE`, "width: 60%"].join("\n"),
+      applyPreview,
+    );
+    const root = document.createElement("div");
+    root.append(applyPreview.mock.calls[0]?.[0] as HTMLElement);
+    hydrateEmbedPreviews(root);
+
+    const preview = root.querySelector<HTMLElement>(".tome-embed-preview");
+    const handle = root.querySelector(".tome-media-resize");
+    expect(preview).toHaveStyle("--tome-media-width: 60%");
+    expect(handle).toHaveAccessibleName("Resize YouTube embed");
+    expect(handle).toHaveAttribute("role", "slider");
+    expect(handle).toHaveAttribute("aria-valuenow", "60");
+    expect(root.querySelector("iframe")).not.toBeNull();
+  });
+
+  it("renders an accessible alignment control for persisted media alignment", () => {
+    const applyPreview = jest.fn();
+
+    renderTomeCodePreview(
+      "youtube",
+      [`url: https://youtu.be/M7lc1UVf-VE`, "width: 60%", "align: right"].join("\n"),
+      applyPreview,
+    );
+    const root = document.createElement("div");
+    root.append(applyPreview.mock.calls[0]?.[0] as HTMLElement);
+
+    const preview = root.querySelector<HTMLElement>(".tome-embed-preview");
+    expect(preview).toHaveAttribute("data-media-align", "right");
+    expect(root.querySelector(".tome-media-alignment")).toHaveAccessibleName(
+      "Media alignment",
+    );
+    expect(
+      root.querySelector('button.tome-media-align[data-align="right"]'),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(
+      root.querySelector('button.tome-media-align[data-align="left"]'),
+    ).toHaveAttribute("aria-pressed", "false");
   });
 
   it("renders arXiv papers as embedded PDFs", () => {

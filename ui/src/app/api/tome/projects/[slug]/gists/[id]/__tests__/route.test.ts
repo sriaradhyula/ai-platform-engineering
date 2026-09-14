@@ -60,6 +60,7 @@ describe("PATCH Tome gist", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: " Updated title ",
+          filename: "updated-notes",
           body: "Updated body",
           tags: [" updated ", "updated", ""],
         }),
@@ -74,6 +75,7 @@ describe("PATCH Tome gist", () => {
       {
         $set: expect.objectContaining({
           title: "Updated title",
+          filename: "updated-notes.md",
           body: "Updated body",
           tags: ["updated"],
           updated_at: expect.any(Date),
@@ -87,7 +89,7 @@ describe("PATCH Tome gist", () => {
         projectSlug: "example-project",
         metadata: {
           gist_id: "gist-1",
-          changed_fields: ["title", "body", "tags"],
+          changed_fields: ["title", "filename", "body", "tags"],
         },
       }),
     );
@@ -97,6 +99,7 @@ describe("PATCH Tome gist", () => {
         gist: {
           id: "gist-1",
           title: "Updated title",
+          filename: "updated-notes.md",
           body: "Updated body",
           author: "author@example.test",
           tags: ["updated"],
@@ -111,6 +114,20 @@ describe("PATCH Tome gist", () => {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
+      }),
+      context,
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockUpdateOne).not.toHaveBeenCalled();
+  });
+
+  it("rejects a filename containing a path", async () => {
+    const response = await PATCH(
+      new NextRequest("http://example.test/api/tome/projects/example-project/gists/gist-1", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: "nested/example.md" }),
       }),
       context,
     );

@@ -66,6 +66,9 @@ interface Props {
   onOpenPage?: (path: string) => void;
   /** Resolve a glossary term slug to its definition for the hover card. */
   glossaryPreview?: GlossaryResolver;
+  /** One-shot prompt supplied by another Tome surface, such as New page. */
+  initialPrompt?: string | null;
+  onInitialPromptConsumed?: () => void;
 }
 
 export function ChatPanel({
@@ -74,6 +77,8 @@ export function ChatPanel({
   onPagesChanged,
   onOpenPage,
   glossaryPreview,
+  initialPrompt,
+  onInitialPromptConsumed,
 }: Props) {
   const searchParams = useSearchParams();
   const viewSessionId = searchParams.get("session");
@@ -96,6 +101,12 @@ export function ChatPanel({
   const [loadingHistory, setLoadingHistory] = useState(!storedChat?.hydrated);
   const [confirmDialog, setConfirmDialog] = useState<"clear" | "compact" | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!initialPrompt || viewSessionId) return;
+    setInput(initialPrompt);
+    onInitialPromptConsumed?.();
+  }, [initialPrompt, onInitialPromptConsumed, viewSessionId]);
 
   const updateMessages = useCallback(
     (updater: (messages: ChatMsg[]) => ChatMsg[]) => {

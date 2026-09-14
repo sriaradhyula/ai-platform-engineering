@@ -4,6 +4,7 @@ import { NextRequest } from "next/server";
 
 const mockLoadTomeProject = jest.fn();
 const mockListPages = jest.fn();
+const mockFindGist = jest.fn();
 const mockFetch = jest.fn();
 
 jest.mock("@/lib/tome/tome-api", () => ({
@@ -12,6 +13,11 @@ jest.mock("@/lib/tome/tome-api", () => ({
 jest.mock("@/lib/tome/page-store", () => ({
   getPageStore: jest.fn().mockImplementation(async () => ({
     listPages: (...args: unknown[]) => mockListPages(...args),
+  })),
+}));
+jest.mock("@/lib/tome/mongo-collections", () => ({
+  getTomeGistsCollection: jest.fn().mockImplementation(async () => ({
+    findOne: (...args: unknown[]) => mockFindGist(...args),
   })),
 }));
 
@@ -65,6 +71,12 @@ beforeEach(() => {
     "overview.md": "---\ntitle: Overview\nkind: stable\n---\nVisible <!-- agent-only -->",
     "memory.md": "---\ntitle: Memory\nkind: hidden\n---\nHidden notes",
   });
+  mockFindGist.mockResolvedValue({
+    _id: "gist-1",
+    project_id: "project-1",
+    title: "Example gist",
+    body: "Gist content <!-- agent-only -->",
+  });
   global.fetch = mockFetch;
   mockFetch.mockResolvedValue(agentStream(deck));
 });
@@ -100,6 +112,33 @@ describe("POST presentation generation", () => {
     await POST(request({ source_scope: "wiki", paths: [], prompt: "Confirmed prompt" }), context);
     const upstream = JSON.parse(mockFetch.mock.calls[0][1].body as string);
     expect(upstream.sources.map((source: { path: string }) => source.path)).toEqual(["overview.md"]);
+  });
+
+  it("generates from a project-authorized gist", async () => {
+    mockFetch.mockResolvedValueOnce(agentStream({
+      ...deck,
+      slides: [{
+        ...deck.slides[0],
+        bullets: [{ text: "Gist fact", source_refs: ["@gist/gist-1"], generated: false }],
+      }],
+    }));
+
+    const response = await POST(request({
+      source_scope: "gist",
+      paths: ["@gist/gist-1"],
+      gist_id: "gist-1",
+      prompt: "Confirmed prompt",
+    }), context);
+
+    expect(response.status).toBe(200);
+    const upstream = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    expect(upstream.sources).toEqual([{
+      path: "@gist/gist-1",
+      title: "Example gist",
+      content: "Gist content",
+    }]);
+    expect(await response.text()).toContain("@gist/gist-1");
+    expect(mockListPages).not.toHaveBeenCalled();
   });
 
   it.each(["current", "selected"])("rejects hidden pages from %s scope", async (sourceScope) => {

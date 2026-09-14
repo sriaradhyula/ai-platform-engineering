@@ -77,6 +77,34 @@ describe("AiAssistButton", () => {
     ).toBeInTheDocument();
   });
 
+  it("can be opened by a host selection toolbar", async () => {
+    const onOpenChange = jest.fn();
+    const { rerender } = render(
+      <AiAssistButton
+        task="tome-inline-markdown"
+        getContext={() => ({ current_value: "Selected sentence" })}
+        onApply={() => {}}
+        open={false}
+        onOpenChange={onOpenChange}
+      />,
+    );
+
+    expect(screen.queryByTestId("ai-assist-popover")).not.toBeInTheDocument();
+    rerender(
+      <AiAssistButton
+        task="tome-inline-markdown"
+        getContext={() => ({ current_value: "Selected sentence" })}
+        onApply={() => {}}
+        open
+        onOpenChange={onOpenChange}
+      />,
+    );
+
+    expect(await screen.findByTestId("ai-assist-popover")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it("streams content events and applies the result", async () => {
     const onApply = jest.fn();
     fetchSpy.mockResolvedValueOnce(

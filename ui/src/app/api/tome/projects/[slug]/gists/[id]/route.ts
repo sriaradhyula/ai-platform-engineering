@@ -9,7 +9,11 @@ import { NextRequest } from "next/server";
 import { ApiError, successResponse, withErrorHandler } from "@/lib/api-middleware";
 import { loadTomeProject, requireTomeEditor } from "@/lib/tome/tome-api";
 import { auditTome, tomeActorFromAuth } from "@/lib/tome/audit";
-import { normalizeGistTags } from "@/lib/tome/gists";
+import {
+  defaultGistFilename,
+  normalizeGistFilename,
+  normalizeGistTags,
+} from "@/lib/tome/gists";
 import { getTomeGistsCollection } from "@/lib/tome/mongo-collections";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +32,7 @@ export const GET = withErrorHandler(async (request: NextRequest, ctx: Ctx) => {
     gist: {
       id: String(gist._id),
       title: gist.title,
+      filename: gist.filename ?? defaultGistFilename(gist.title),
       body: gist.body,
       author: gist.author,
       created_at: gist.created_at,
@@ -46,13 +51,19 @@ export const PATCH = withErrorHandler(async (request: NextRequest, ctx: Ctx) => 
 
   const body = (await request.json().catch(() => null)) as {
     title?: unknown;
+    filename?: unknown;
     body?: unknown;
     tags?: unknown;
   } | null;
   if (!body) throw new ApiError("Request body must be JSON", 400, "BAD_REQUEST");
-  if (body.title === undefined && body.body === undefined && body.tags === undefined) {
+  if (
+    body.title === undefined &&
+    body.filename === undefined &&
+    body.body === undefined &&
+    body.tags === undefined
+  ) {
     throw new ApiError(
-      "Provide at least one of title, body, or tags",
+      "Provide at least one of title, filename, body, or tags",
       400,
       "BAD_REQUEST",
     );
@@ -60,6 +71,7 @@ export const PATCH = withErrorHandler(async (request: NextRequest, ctx: Ctx) => 
 
   const update: {
     title?: string;
+    filename?: string;
     body?: string;
     tags?: string[];
     updated_at: Date;
@@ -73,6 +85,13 @@ export const PATCH = withErrorHandler(async (request: NextRequest, ctx: Ctx) => 
       throw new ApiError("`title` must be a non-empty string", 400, "BAD_REQUEST");
     }
     update.title = body.title.trim();
+  }
+  if (body.filename !== undefined) {
+    try {
+      update.filename = normalizeGistFilename(body.filename);
+    } catch (error) {
+      throw new ApiError((error as Error).message, 400, "BAD_REQUEST");
+    }
   }
   if (body.body !== undefined) {
     if (typeof body.body !== "string" || !body.body.trim()) {
@@ -103,7 +122,7 @@ export const PATCH = withErrorHandler(async (request: NextRequest, ctx: Ctx) => 
     projectSlug: slug,
     metadata: {
       gist_id: id,
-      changed_fields: ["title", "body", "tags"].filter(
+      changed_fields: ["title", "filename", "body", "tags"].filter(
         (field) => body[field as keyof typeof body] !== undefined,
       ),
     },
@@ -113,6 +132,7 @@ export const PATCH = withErrorHandler(async (request: NextRequest, ctx: Ctx) => 
     gist: {
       id: String(updated._id),
       title: updated.title,
+      filename: updated.filename ?? defaultGistFilename(updated.title),
       body: updated.body,
       author: updated.author,
       created_at: updated.created_at,

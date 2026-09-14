@@ -125,6 +125,49 @@ describe("PresentationExportDialog", () => {
     expect(within(streamDialog).getByRole("button", { name: "Review filled brief" })).toBeEnabled();
   });
 
+  it("uses the current gist without loading or exposing the wiki page picker", async () => {
+    const gistDeck = {
+      ...initialDeck,
+      slides: [{
+        ...initialDeck.slides[0],
+        bullets: [{ text: "Gist fact", source_refs: ["@gist/gist-1"], generated: false }],
+        visual: null,
+      }],
+    };
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(
+      generationStream(gistDeck),
+    );
+    fetchMock.mockClear();
+
+    render(
+      <PresentationExportDialog
+        slug="example-project"
+        gist={{ id: "gist-1", title: "Example gist", filename: "example-gist.md" }}
+        open
+        onOpenChange={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Example gist")).toBeInTheDocument();
+    expect(screen.getByText("example-gist.md")).toBeInTheDocument();
+    expect(screen.queryByText("Entire wiki")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Compose prompt/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Generate deck/ }));
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(
+      ([input]) => String(input).includes("/presentations/generate"),
+    )).toBe(true));
+    expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith("/pages"))).toBe(false);
+    const generationCall = fetchMock.mock.calls.find(
+      ([input]) => String(input).includes("/presentations/generate"),
+    );
+    expect(JSON.parse(String(generationCall?.[1]?.body))).toMatchObject({
+      source_scope: "gist",
+      paths: ["@gist/gist-1"],
+      gist_id: "gist-1",
+    });
+  });
+
   it("includes slide edits and reordered slides in a slide-scoped revision request", async () => {
     const generationBodies: Array<Record<string, unknown>> = [];
     jest.spyOn(global, "fetch").mockImplementation(async (input, init) => {

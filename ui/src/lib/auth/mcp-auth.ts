@@ -4,10 +4,11 @@ import type { NextRequest } from "next/server";
 
 import { getAuthFromBearerOrSession } from "@/lib/api-middleware";
 import {
-  buildTomeOidcAuth,
-  isTomeSecondaryOidcConfigured,
-  validateTomeSecondaryOidcJWT,
-} from "@/lib/tome/oidc-jwt";
+  buildSecondaryOidcAuth,
+  isSecondaryOidcConfigured,
+  validateSecondaryOidcJWT,
+} from "@/lib/auth/secondary-oidc";
+import { unlinkedSecondaryOidcIdentity } from "@/lib/auth/secondary-identity-link";
 
 type AuthErrorDetails = {
   action?: unknown;
@@ -93,21 +94,41 @@ function logAuthDebug(
   event: string,
   details: Record<string, unknown>,
 ): void {
-  if (process.env.TOME_MCP_AUTH_DEBUG !== "true") return;
+  if (process.env.CAIPE_SECONDARY_OIDC_AUTH_DEBUG !== "true") return;
   console.warn(
-    "[tome-mcp-auth]",
+    "[caipe-secondary-oidc-auth]",
     JSON.stringify({ event, requestId, ...details }),
   );
 }
 
+function buildUnlinkedSecondaryOidcAuth(identity: {
+  email: string;
+  name: string;
+}) {
+  const user = { email: identity.email, name: identity.name, role: "user" };
+  return {
+    user,
+    session: {
+      role: "user" as const,
+      sub: undefined,
+      principalType: "secondary_oidc_unlinked" as const,
+      authMethod: "bearer" as const,
+      user: { email: identity.email, name: identity.name },
+    },
+  };
+}
+
 /**
- * TOME MCP authentication accepts a JWT from an optional secondary OIDC
+ * MCP authentication accepts a JWT from an optional secondary OIDC
  * provider in addition to CAIPE's existing Keycloak, API-key, and
  * browser-session credentials. The secondary provider is attempted first
- * only here; all other API routes retain the normal Keycloak-only bearer
- * behavior.
+ * only for callers that opt into this helper; all other API routes retain the
+ * normal Keycloak-only bearer behavior.
  */
-export async function getTomeAuthFromBearerOrSession(request: NextRequest) {
+export async function getMcpAuthFromBearerOrSession(
+  request: NextRequest,
+  options: { allowUnlinkedSecondaryIdentity?: boolean } = {},
+) {
   const authorization = request.headers.get("authorization");
   const requestId = debugRequestId(request);
   const hasBearer = authorization?.startsWith("Bearer ") === true;
@@ -119,7 +140,7 @@ export async function getTomeAuthFromBearerOrSession(request: NextRequest) {
 
     let secondaryConfigured: boolean;
     try {
-      secondaryConfigured = isTomeSecondaryOidcConfigured();
+      secondaryConfigured = isSecondaryOidcConfigured();
     } catch (error) {
       logAuthDebug(requestId, "secondary_config_invalid", {
         ...bearerMetadata,
@@ -130,10 +151,18 @@ export async function getTomeAuthFromBearerOrSession(request: NextRequest) {
 
     if (secondaryConfigured) {
       try {
-        const identity = await validateTomeSecondaryOidcJWT(token);
+        const identity = await validateSecondaryOidcJWT(token);
         logAuthDebug(requestId, "secondary_validation_succeeded", bearerMetadata);
-        return buildTomeOidcAuth(token, identity);
+        return buildSecondaryOidcAuth(token, identity);
       } catch (error) {
+        const unlinkedIdentity = unlinkedSecondaryOidcIdentity(error);
+        if (unlinkedIdentity && options.allowUnlinkedSecondaryIdentity) {
+          logAuthDebug(requestId, "secondary_identity_unlinked", {
+            ...bearerMetadata,
+            error: authErrorMetadata(error),
+          });
+          return buildUnlinkedSecondaryOidcAuth(unlinkedIdentity);
+        }
         logAuthDebug(requestId, "secondary_validation_failed", {
           ...bearerMetadata,
           error: authErrorMetadata(error),

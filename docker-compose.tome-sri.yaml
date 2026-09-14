@@ -51,6 +51,10 @@ services:
       - TOME_AGENT_BACKEND_URL=http://caipe-ui:3000/api/tome
       - MYCELIUM_URL=http://mycelium-backend-tome:8000
       - TOME_INTERNAL_ORIGIN=http://caipe-ui:3000
+      # This preview reaches Bedrock through the configured LiteLLM endpoint;
+      # direct aws-bedrock credentials on the host are intentionally absent.
+      - AI_ASSIST_MODEL_ID=${AI_ASSIST_MODEL_ID:-bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0}
+      - AI_ASSIST_MODEL_PROVIDER=${AI_ASSIST_MODEL_PROVIDER:-openai}
       - PROJECTS_ONBOARDING_CONFIG_PATH=/app/config/projects-onboarding.yaml
       - REPORT_PROBLEM_ROUTING=${REPORT_PROBLEM_ROUTING:-github}
       - GITHUB_TICKET_ENABLED=true

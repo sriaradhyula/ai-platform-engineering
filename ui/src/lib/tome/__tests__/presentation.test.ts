@@ -9,6 +9,7 @@ import {
   normalizePresentationDeck,
   normalizePresentationRequirements,
   presentationSourceFromPage,
+  presentationSourceFromGist,
   presentationSourceUrl,
 } from "@/lib/tome/presentation";
 import { renderPresentationHtml } from "@/lib/tome/presentation-html";
@@ -101,6 +102,31 @@ describe("TOME presentation export", () => {
     expect(normalizePresentationDeck(rawDeck, ["status.md"]).slides[0].bullets[0].generated).toBe(false);
     expect(() => normalizePresentationDeck(rawDeck, ["overview.md"])).toThrow(
       "references an unselected page: status.md",
+    );
+  });
+
+  it("preserves nested lists and intentional paragraph breaks in presentation sources", () => {
+    const body = "- Parent\n  1. Child\n     - Grandchild\n\nNext paragraph";
+    expect(
+      presentationSourceFromPage("example.md", `---\ntitle: Example\n---\n${body}`).content,
+    ).toBe(body);
+  });
+
+  it("builds sanitized gist sources and canonical gist links", () => {
+    expect(presentationSourceFromGist(
+      "gist-1",
+      "Example gist",
+      "Visible <!-- agent-only -->",
+    )).toEqual({
+      path: "@gist/gist-1",
+      title: "Example gist",
+      content: "Visible",
+    });
+    expect(presentationSourceUrl(
+      "https://tome.example.test/projects/example-project/tome/wiki/",
+      "@gist/gist-1",
+    )).toBe(
+      "https://tome.example.test/projects/example-project/tome/gists/gist-1",
     );
   });
 

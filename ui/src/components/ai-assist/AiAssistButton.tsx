@@ -84,6 +84,9 @@ export interface AiAssistButtonProps {
   align?: "start" | "center" | "end";
   /** test id for the trigger. */
   triggerTestId?: string;
+  /** Optional controlled popover state for selection-toolbar integrations. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 export function AiAssistButton({
@@ -99,13 +102,20 @@ export function AiAssistButton({
   side = "bottom",
   align = "end",
   triggerTestId,
+  open: controlledOpen,
+  onOpenChange,
 }: AiAssistButtonProps) {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
   const [instruction, setInstruction] = useState("");
   const [hasResult, setHasResult] = useState(false);
   const [activeTask, setActiveTask] = useState<AiAssistTaskId>(task);
 
   const assist = useAiAssist({ task });
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = useCallback((nextOpen: boolean) => {
+    if (controlledOpen === undefined) setInternalOpen(nextOpen);
+    onOpenChange?.(nextOpen);
+  }, [controlledOpen, onOpenChange]);
 
   const handleSubmit = useCallback(
     async (override?: string) => {
@@ -141,7 +151,7 @@ export function AiAssistButton({
       setInstruction("");
       setHasResult(false);
     }, 150);
-  }, [assist, onApply]);
+  }, [assist, onApply, setOpen]);
 
   const handleDiscard = useCallback(() => {
     assist.cancel();
@@ -151,7 +161,7 @@ export function AiAssistButton({
       setInstruction("");
       setHasResult(false);
     }, 150);
-  }, [assist]);
+  }, [assist, setOpen]);
 
   const handleRetry = useCallback(() => {
     setHasResult(false);

@@ -12,7 +12,9 @@ on:
       - 'charts/ai-platform-engineering/charts/keycloak/realm-config.json'
       - 'charts/ai-platform-engineering/charts/keycloak/templates/job-init-*.yaml'
       - 'charts/ai-platform-engineering/charts/keycloak/templates/job-auth-reconcile.yaml'
+      - 'charts/ai-platform-engineering/charts/keycloak/templates/job-user-profile-reconcile.yaml'
       - 'charts/ai-platform-engineering/charts/keycloak/templates/platform-client-external-secret.yaml'
+      - 'tests/test_keycloak_user_profile_reconcile.py'
       - 'tests/integration/test_keycloak_platform_client_reconcile.sh'
       - 'tests/integration/test_keycloak_strict_client_secrets.sh'
       - 'tests/integration/test_keycloak_idp_hint_redirect.sh'
@@ -236,6 +238,20 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+
+      - name: Test unconditional user-profile reconciliation
+        run: >-
+          uv run --no-project --with pytest --with pyyaml
+          pytest -q tests/test_keycloak_user_profile_reconcile.py
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
