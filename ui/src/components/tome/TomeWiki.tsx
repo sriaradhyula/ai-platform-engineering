@@ -915,7 +915,11 @@ export function TomeWiki({ slug }: { slug: string }) {
           conflict.currentCreatedAt = payload.data?.current_created_at ?? null;
           throw conflict;
         }
-        throw new Error(payload?.error || `save failed (${res.status})`);
+        const detail = typeof payload?.error === "string"
+          ? payload.error
+          : `save failed (${res.status})`;
+        const code = typeof payload?.code === "string" ? ` [${payload.code}]` : "";
+        throw new Error(`${detail}${code}`);
       }
       setData((prev) =>
         prev ? { ...prev, pages: { ...prev.pages, [path]: markdown } } : prev,

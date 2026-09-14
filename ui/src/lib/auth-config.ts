@@ -728,7 +728,19 @@ export const authOptions: NextAuthOptions = {
         // Extract groups for authorization check only (not stored in token)
         const groups = extractGroups(profileData);
         const subject = (profileData.sub as string | undefined) ?? (token.sub as string | undefined);
-        const email = profileData.email as string | undefined;
+        const email =
+          typeof profileData.email === "string"
+            ? profileData.email
+            : typeof profileData.preferred_username === "string"
+              ? profileData.preferred_username
+              : typeof profileData.username === "string"
+                ? profileData.username
+                : undefined;
+        // Keep the identity used for bootstrap-admin evaluation in the JWT.
+        // Refreshed ID tokens do not always contain an email claim, so omitting
+        // it here could turn a bootstrap admin into an unauthorized session at
+        // the next four-hour group re-check.
+        if (email) token.email = email;
         cacheOidcClaimGroups(subject, groups);
 
         // Only store the authorization result (NOT the groups array!)
@@ -854,7 +866,8 @@ export const authOptions: NextAuthOptions = {
                 const email =
                   typeof claims.email === "string"
                     ? claims.email
-                    : (token.email as string | undefined);
+                    : (refreshedToken.email as string | undefined) ??
+                      (token.email as string | undefined);
                 return {
                   ...refreshedToken,
                   isAuthorized: hasRequiredGroup(groups) || isBootstrapAdmin(email),

@@ -1026,6 +1026,26 @@ describe('getAuthenticatedUser', () => {
     });
   });
 
+  it('accepts a configured bootstrap admin when an older session has stale authorization', async () => {
+    process.env.BOOTSTRAP_ADMIN_EMAILS = 'bootstrap@example.com';
+    mockGetServerSession.mockResolvedValue({
+      user: { email: 'bootstrap@example.com', name: 'Bootstrap Admin' },
+      role: 'admin',
+      isAuthorized: false,
+    });
+    mockGetCollection.mockResolvedValue({
+      findOne: jest.fn().mockResolvedValue(null),
+    });
+
+    const req = new Request('http://test.com') as unknown as NextRequest;
+    const result = await getAuthenticatedUser(req);
+
+    expect(result.user).toMatchObject({
+      email: 'bootstrap@example.com',
+      role: 'admin',
+    });
+  });
+
   it('does not persist or inspect profile data for sessions denied by the admission gate', async () => {
     mockGetServerSession.mockResolvedValue({
       user: { email: 'blocked@test.com', name: 'Blocked User' },
