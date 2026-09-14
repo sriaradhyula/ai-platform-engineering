@@ -251,7 +251,7 @@ describe("Webex meeting-series scheduler", () => {
     );
   });
 
-  it("processes Area subscriptions while leaving BHAGs synthesis-only", async () => {
+  it("processes Area and BHAG meeting-series subscriptions", async () => {
     const area = { ...project, type: "area" as const };
     const bhag = {
       ...project,
@@ -269,7 +269,13 @@ describe("Webex meeting-series scheduler", () => {
         dispatch: expect.objectContaining({ sourceScope: "webex_meetings" }),
       }),
     );
-    expect(occurrences).not.toContainEqual(expect.objectContaining({ project_id: "bhag-1" }));
+    expect(enqueueRun).toHaveBeenCalledWith(
+      bhag,
+      expect.objectContaining({
+        dispatch: expect.objectContaining({ sourceScope: "webex_meetings" }),
+      }),
+    );
+    expect(occurrences).toContainEqual(expect.objectContaining({ project_id: "bhag-1" }));
   });
 
   it("marks a settled transcript as needing attention when another draft awaits review", async () => {

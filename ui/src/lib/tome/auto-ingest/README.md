@@ -3,13 +3,13 @@
 Tome can follow recurring Webex meeting series and create an ingest run after
 each accessible recorded occurrence has ended and its transcript is available.
 The connected user may be the host, a cohost, or a user with whom Webex shared
-the recording. Recurring series are supported on regular projects and Areas;
-BHAGs remain synthesis-only. This flow is independent of the project's
-CRON-based project-source auto-ingest schedule.
+the recording. Recurring series are supported on regular projects, Areas, and
+BHAGs. This flow is independent of the project's CRON-based project-source
+auto-ingest schedule.
 
-An Area meeting ingest is transcript-only. It updates the Area wiki directly
-without pulling the Area's attached sources, reading child-project wikis, or
-starting a child-project refresh or Area synthesis cascade.
+An Area or BHAG meeting ingest is transcript-only. It updates that entity's wiki
+directly without pulling attached sources, reading child-project/Area wikis, or
+starting a child refresh or synthesis cascade.
 
 ## User Flow
 
@@ -167,7 +167,8 @@ store `sourceScope: "webex_meetings"` on the run dispatch. Run preparation then:
    defense in depth.
 
 This excludes GitHub repositories, Confluence, Webex spaces, Area child-project
-wikis, and every other attached source from the meeting-only request.
+wikis, BHAG child-Area/project wikis, and every other attached source from the
+meeting-only request.
 
 ## Execution Flow
 

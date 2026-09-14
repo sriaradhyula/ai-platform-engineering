@@ -190,13 +190,26 @@ describe("POST /api/tome/projects/[slug]/webex-meeting-series", () => {
     );
   });
 
-  it("keeps recurring meeting ingestion unavailable for BHAGs", async () => {
+  it("allows a BHAG to subscribe to a recurring meeting", async () => {
     mockLoadTomeProject.mockResolvedValueOnce({
       projectId: "bhag-id",
-      project: { _id: "bhag-id", type: "bhag", slug: "example-bhag" },
+      project: {
+        _id: "bhag-id",
+        type: "bhag",
+        slug: "example-bhag",
+        autoIngest: {
+          enabled: false,
+          cron: "0 9 * * *",
+          credentialOwner: null,
+          webexMeetingSeries: [],
+        },
+      },
       canEdit: true,
       user: { email: "owner@example.test" },
-      session: { sub: "owner-subject" },
+      session: {
+        sub: "owner-subject",
+        user: { name: "Example Owner", email: "owner@example.test" },
+      },
     });
 
     const response = await POST(
@@ -210,11 +223,17 @@ describe("POST /api/tome/projects/[slug]/webex-meeting-series", () => {
       ),
       context,
     );
-    const body = await response.json();
-
-    expect(response.status).toBe(400);
-    expect(body.code).toBe("MEETING_SERIES_PROJECT_REQUIRED");
-    expect(updateOne).not.toHaveBeenCalled();
+    expect(response.status).toBe(201);
+    expect(updateOne).toHaveBeenCalledWith(
+      { _id: "bhag-id" },
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          autoIngest: expect.objectContaining({
+            webexMeetingSeries: [expect.objectContaining({ id: "subscription-id" })],
+          }),
+        }),
+      }),
+    );
   });
 
   it("rejects adding a non-hosted series when the policy is disabled", async () => {

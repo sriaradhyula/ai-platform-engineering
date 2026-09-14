@@ -8,7 +8,7 @@ import { auditTome, tomeActorFromAuth } from "@/lib/tome/audit";
 import { enqueueRun } from "@/lib/tome/ingest-runner";
 import { getTomeIngestRunsCollection } from "@/lib/tome/mongo-collections";
 import { loadTomeProject, requireTomeEditor } from "@/lib/tome/tome-api";
-import { supportsWebexMeetingSeries, type ProjectDocument } from "@/types/projects";
+import type { ProjectDocument } from "@/types/projects";
 import {
   TOME_COLLECTIONS,
   type WebexMeetingOccurrenceDocument,
@@ -31,13 +31,6 @@ export const POST = withErrorHandler(async (request: NextRequest, context: Ctx) 
   const { slug } = await context.params;
   const tctx = await loadTomeProject(request, slug);
   requireTomeEditor(tctx);
-  if (!supportsWebexMeetingSeries(tctx.project.type)) {
-    throw new ApiError(
-      "Meeting-series ingestion is available on projects and Areas, not BHAGs.",
-      400,
-      "MEETING_SERIES_PROJECT_REQUIRED",
-    );
-  }
 
   const body = (await request.json().catch(() => null)) as { occurrenceId?: unknown } | null;
   const occurrenceId =

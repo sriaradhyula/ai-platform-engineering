@@ -52,11 +52,7 @@ import type {
   ProjectType,
   TomeReviewMode,
 } from "@/types/projects";
-import {
-  dataStewardUserEmail,
-  isSynthesizedType,
-  supportsWebexMeetingSeries,
-} from "@/types/projects";
+import { dataStewardUserEmail, isSynthesizedType } from "@/types/projects";
 import {
   DEFAULT_SCHEDULE,
   cronToSchedule,
@@ -832,11 +828,9 @@ export function ProjectSettingsPanel({
                   <TabsTrigger value="models" className={TAB_TRIGGER_CLASS}>
                     Models
                   </TabsTrigger>
-                  {supportsWebexMeetingSeries(projectKind) && (
-                    <TabsTrigger value="auto-ingest" className={TAB_TRIGGER_CLASS}>
-                      Auto-ingest
-                    </TabsTrigger>
-                  )}
+                  <TabsTrigger value="auto-ingest" className={TAB_TRIGGER_CLASS}>
+                    Auto-ingest
+                  </TabsTrigger>
                   <TabsTrigger value="review" className={TAB_TRIGGER_CLASS}>
                     Review
                   </TabsTrigger>
@@ -1346,9 +1340,8 @@ export function ProjectSettingsPanel({
                 </TabsContent>
               )}
 
-              {supportsWebexMeetingSeries(projectKind) && (
-                <TabsContent value="auto-ingest" className="space-y-6 pt-6">
-                  <div className="space-y-6">
+              <TabsContent value="auto-ingest" className="space-y-6 pt-6">
+                <div className="space-y-6">
                     {projectKind === "project" && (
                       <Field label="Auto-ingest">
                       <fieldset disabled={!canEdit} className="space-y-4 disabled:opacity-60">
@@ -1520,10 +1513,9 @@ export function ProjectSettingsPanel({
                       </fieldset>
                       </Field>
                     )}
-                    <WebexMeetingSeriesSettings slug={slug} canEdit={canEdit} />
-                  </div>
-                </TabsContent>
-              )}
+                  <WebexMeetingSeriesSettings slug={slug} canEdit={canEdit} />
+                </div>
+              </TabsContent>
             </Tabs>
           </fieldset>
         </div>

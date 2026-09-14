@@ -7,7 +7,6 @@ import {
   queueWebexMeetingSeriesBackfill,
 } from "@/lib/tome/auto-ingest/webex-meeting-series-backfill";
 import { loadTomeProject, requireTomeEditor } from "@/lib/tome/tome-api";
-import { supportsWebexMeetingSeries } from "@/types/projects";
 import type { ProjectDocument, WebexMeetingSeriesSubscription } from "@/types/projects";
 
 export const dynamic = "force-dynamic";
@@ -18,13 +17,6 @@ function subscriptionFor(
   project: ProjectDocument,
   subscriptionId: string,
 ): WebexMeetingSeriesSubscription {
-  if (!supportsWebexMeetingSeries(project.type)) {
-    throw new ApiError(
-      "Meeting-series ingestion is available on projects and Areas, not BHAGs.",
-      400,
-      "MEETING_SERIES_PROJECT_REQUIRED",
-    );
-  }
   const subscription = project.autoIngest?.webexMeetingSeries?.find(
     (item) => item.id === subscriptionId,
   );
